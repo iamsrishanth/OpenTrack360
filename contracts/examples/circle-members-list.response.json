@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "memberId": "d1a97680-faa9-4f37-8d8f-59841456c981",
+      "username": "saanvi",
+      "displayName": "Saanvi",
+      "role": "member",
+      "sharingEnabled": true,
+      "activitySharingEnabled": false,
+      "precision": "approximate",
+      "joinedAt": "2026-11-26T09:02:00Z"
+    }
+  ],
+  "nextCursor": null
+}

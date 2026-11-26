@@ -1,0 +1,11 @@
+{
+  "id": "e1cd8c39-3695-4e79-9543-c8b83dc96b35",
+  "circleId": "fcac8f75-31c3-4866-bfb6-733f43b0fd90",
+  "memberId": "1bcb3a8e-0d22-4b0a-a910-510fd4547f61",
+  "label": "Reached the station",
+  "latitude": 19.076,
+  "longitude": 72.8777,
+  "accuracyMeters": 12.5,
+  "capturedAt": "2026-11-26T10:12:00Z",
+  "createdAt": "2026-11-26T10:12:02Z"
+}

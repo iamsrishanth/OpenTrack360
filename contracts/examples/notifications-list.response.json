@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "id": "1b0664cb-2714-4965-91a8-4d1d26d43cda",
+      "kind": "sos",
+      "createdAt": "2026-11-26T10:00:05Z",
+      "deliveryState": "submitted",
+      "title": "SOS alert",
+      "body": "Aarav asked the Circle to check in.",
+      "acknowledgedAt": null
+    }
+  ],
+  "nextCursor": null
+}

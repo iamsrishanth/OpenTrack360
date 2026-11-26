@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "id": 42,
+      "actorUsername": "siteadmin",
+      "targetAccountId": "a0a9e1c4-0776-4c20-9367-48d020a0ec7d",
+      "eventType": "password.reset",
+      "metadata": { "requestId": "e15ae5c4-fccb-4443-8259-25a6e9dbcf8c" },
+      "createdAt": "2026-11-27T05:10:00Z"
+    }
+  ],
+  "nextCursor": null
+}

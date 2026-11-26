@@ -1,0 +1,7 @@
+{
+  "name": "Milo",
+  "species": "dog",
+  "circleIds": ["fcac8f75-31c3-4866-bfb6-733f43b0fd90"],
+  "recoveryEnabled": true,
+  "recoveryFields": ["petName", "species", "ownerMessage"]
+}
