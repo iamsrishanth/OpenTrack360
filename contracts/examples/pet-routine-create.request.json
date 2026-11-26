@@ -1,0 +1,13 @@
+{
+  "clientRequestId": "2094c18c-3fea-483f-9716-a14c8f9f477d",
+  "name": "Evening walk",
+  "kind": "walk",
+  "notes": "Use the blue leash",
+  "dueAt": "2026-11-26T13:00:00Z",
+  "recurrence": {
+    "frequency": "daily",
+    "interval": 1,
+    "localTime": "18:30",
+    "timeZone": "Asia/Kolkata"
+  }
+}
