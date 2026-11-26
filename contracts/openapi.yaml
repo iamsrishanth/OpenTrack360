@@ -567,9 +567,23 @@ paths:
       tags: [Circles]
       operationId: setCircleSharing
       summary: Pause or resume the caller's location sharing for this Circle
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      description: Changes only this member's sharing consent in the specified Circle. It does not stop or advance account-wide sharing and does not revive any revoked guest link; use POST /me/stop-sharing for the global stop.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CircleSharingRequest' }
+            examples:
+              pause:
+                value: { sharingEnabled: false }
+              resume:
+                value: { sharingEnabled: true }
       responses:
-        '200': { $ref: '#/components/responses/MutationResult' }
+        '200':
+          description: Updated caller sharing consent in this Circle
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CircleSharingResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/bubbles:
     parameters:
@@ -1855,6 +1869,20 @@ components:
         accepted: { type: boolean, const: true }
         requestId: { type: string, format: uuid }
         status: { type: string, const: queued }
+    CircleSharingRequest:
+      type: object
+      additionalProperties: false
+      required: [sharingEnabled]
+      properties:
+        sharingEnabled: { type: boolean, description: Whether this member consents to share their live location in the addressed Circle. }
+    CircleSharingResult:
+      type: object
+      additionalProperties: false
+      required: [circleId, sharingEnabled, updatedAt]
+      properties:
+        circleId: { type: string, format: uuid }
+        sharingEnabled: { type: boolean }
+        updatedAt: { type: string, format: date-time }
     ApiError:
       type: object
       required: [error]
