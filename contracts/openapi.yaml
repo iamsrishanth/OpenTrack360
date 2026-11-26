@@ -621,7 +621,11 @@ paths:
       operationId: endBubble
       summary: End or burst an active Bubble
       responses:
-        '200': { $ref: '#/components/responses/MutationResult' }
+        '200':
+          description: Bubble ended or an already-ended Bubble's terminal result replayed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BubbleEndResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/places:
     parameters:
@@ -2279,6 +2283,13 @@ components:
       properties:
         data: { type: array, items: { $ref: '#/components/schemas/Bubble' } }
         nextCursor: { type: [string, 'null'] }
+    BubbleEndResult:
+      type: object
+      additionalProperties: false
+      required: [ended, endedAt]
+      properties:
+        ended: { type: boolean, const: true }
+        endedAt: { type: string, format: date-time }
     EmergencyContactInviteRequest:
       type: object
       additionalProperties: false
