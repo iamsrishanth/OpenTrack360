@@ -1,0 +1,146 @@
+package me.srishanth.opentrack360.core
+
+import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import me.srishanth.opentrack360.core.api.ApiShareGateway
+import me.srishanth.opentrack360.core.api.ApiTrackingTransport
+import me.srishanth.opentrack360.core.api.OpenTrackApi
+import me.srishanth.opentrack360.sharing.SenderShare
+import me.srishanth.opentrack360.core.auth.KeystoreSessionStore
+import me.srishanth.opentrack360.tracking.AndroidKeystoreTrackingQueueCipher
+import me.srishanth.opentrack360.tracking.AndroidPermissionProbe
+import me.srishanth.opentrack360.tracking.DriveUpdate
+import me.srishanth.opentrack360.tracking.OfflineTrackingQueue
+import me.srishanth.opentrack360.tracking.SharedPreferencesTrackingBlobStorage
+import me.srishanth.opentrack360.tracking.TrackingRuntime
+import me.srishanth.opentrack360.tracking.TrackingRuntimeProvider
+import me.srishanth.opentrack360.tracking.TrackingScope
+import me.srishanth.opentrack360.tracking.TrackingStatus
+import me.srishanth.opentrack360.tracking.TrackingEngine
+import java.util.UUID
+
+/** App-scoped clients. No backend service credential is shipped in the APK. */
+class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
+    private val appContext = context.applicationContext
+    private val sharingPreferences = appContext.getSharedPreferences(SHARING_PREFERENCES, Context.MODE_PRIVATE)
+    val sessions = KeystoreSessionStore(appContext)
+    val api = OpenTrackApi(sessions)
+    private val mutableDriveEndShares = MutableStateFlow<Set<String>>(emptySet())
+    val shareGateway = ApiShareGateway(api, ::cacheShares)
+    val trackingTransport = ApiTrackingTransport(api)
+    val trackingEngine = TrackingEngine()
+    val trackingQueue = OfflineTrackingQueue(
+        SharedPreferencesTrackingBlobStorage(appContext),
+        AndroidKeystoreTrackingQueueCipher(),
+    )
+
+    private val mutableTrackingStatus = MutableStateFlow<TrackingStatus?>(null)
+    val trackingStatus = mutableTrackingStatus.asStateFlow()
+    private val mutableDriveUpdate = MutableStateFlow<DriveUpdate?>(null)
+    val latestDriveUpdate = mutableDriveUpdate.asStateFlow()
+
+    fun startMemberSession(memberId: String): String {
+        val sessionId = UUID.randomUUID().toString()
+        sharingPreferences.edit().putString(sessionKey(memberId), sessionId).commit()
+        return sessionId
+    }
+
+    fun ensureMemberSession(memberId: String): String {
+        sharingPreferences.getString(sessionKey(memberId), null)?.let { return it }
+        return startMemberSession(memberId)
+    }
+
+    private fun cacheShares(shares: List<SenderShare>) {
+        mutableDriveEndShares.value = shares.asSequence()
+            .filter { it.status.wireValue == "active" && it.mode.wireValue == "drive_end" }
+            .map { it.id }
+            .toSet()
+    }
+
+    fun endMemberSession(memberId: String?) {
+        if (memberId != null) sharingPreferences.edit().remove(sessionKey(memberId)).commit()
+    }
+
+    fun setSharingConsent(memberId: String, accepted: Boolean) {
+        val editor = sharingPreferences.edit()
+            .putBoolean(consentKey(memberId), accepted)
+            .putLong(generationKey(memberId), generation(memberId) + 1)
+        if (!accepted) editor.putBoolean(sharingEnabledKey(memberId), false)
+        editor.commit()
+    }
+
+    fun setSharingEnabled(memberId: String, enabled: Boolean) {
+        sharingPreferences.edit().putBoolean(sharingEnabledKey(memberId), enabled).commit()
+    }
+
+    fun sharingIsEnabled(memberId: String): Boolean = sharingPreferences.getBoolean(sharingEnabledKey(memberId), false)
+
+    fun activitySharingEnabled(memberId: String, circleId: String): Boolean =
+        sharingPreferences.getBoolean(activityConsentKey(memberId, circleId), false)
+
+    fun setActivitySharingEnabled(memberId: String, circleId: String, enabled: Boolean) {
+        sharingPreferences.edit().putBoolean(activityConsentKey(memberId, circleId), enabled).commit()
+    }
+
+    fun updateSharingEpoch(memberId: String?, epoch: Long) {
+        if (memberId == null || epoch < 1) return
+        sharingPreferences.edit().putLong(epochKey(memberId), epoch).commit()
+    }
+
+    fun syncSharingEpoch(memberId: String, epoch: Long) = updateSharingEpoch(memberId, epoch)
+
+    fun sharingEpoch(memberId: String): Long = sharingPreferences.getLong(epochKey(memberId), 1)
+
+    override fun create(context: Context): TrackingRuntime = TrackingRuntime(
+        queue = trackingQueue,
+        transport = trackingTransport,
+        engine = trackingEngine,
+        scopeProvider = {
+            val session = sessions.load()?.takeUnless { it.mustRotatePassword }
+            if (session == null) null else {
+                val sessionId = sharingPreferences.getString(sessionKey(session.memberId), null)
+                if (sessionId == null) null else {
+                    val currentPrecision = AndroidPermissionProbe.snapshot(appContext).precision
+                    val precision = currentPrecision ?: sharingPreferences.getString(lastPrecisionKey(session.memberId), "APPROXIMATE")
+                        ?.let { stored -> runCatching { me.srishanth.opentrack360.tracking.LocationPrecision.valueOf(stored) }.getOrNull() }
+                        ?: me.srishanth.opentrack360.tracking.LocationPrecision.APPROXIMATE
+                    if (currentPrecision != null) sharingPreferences.edit()
+                        .putString(lastPrecisionKey(session.memberId), currentPrecision.name)
+                        .commit()
+                    TrackingScope(
+                        userId = session.memberId,
+                        sessionId = sessionId,
+                        consentGeneration = generation(session.memberId),
+                        sharingEpoch = sharingEpoch(session.memberId),
+                        precision = precision,
+                    )
+                }
+            }
+        },
+        sharingConsentEnabled = {
+            sessions.load()?.let { sharingPreferences.getBoolean(consentKey(it.memberId), false) } ?: false
+        },
+        sharingEnabled = {
+            sessions.load()?.let { sharingIsEnabled(it.memberId) } ?: false
+        },
+        activeDriveEndShareIds = { mutableDriveEndShares.value.toList() },
+        onTrackingStatus = { mutableTrackingStatus.value = it },
+        onDriveUpdate = { mutableDriveUpdate.value = it },
+        onSharingEpoch = { memberId, epoch -> updateSharingEpoch(memberId, epoch) },
+    )
+
+    private fun generation(memberId: String): Long = sharingPreferences.getLong(generationKey(memberId), 0)
+
+    private fun sessionKey(memberId: String) = "session_$memberId"
+    private fun consentKey(memberId: String) = "consent_$memberId"
+    private fun generationKey(memberId: String) = "consent_generation_$memberId"
+    private fun epochKey(memberId: String) = "sharing_epoch_$memberId"
+    private fun lastPrecisionKey(memberId: String) = "last_precision_$memberId"
+    private fun sharingEnabledKey(memberId: String) = "sharing_enabled_$memberId"
+    private fun activityConsentKey(memberId: String, circleId: String) = "activity_consent_${memberId}_$circleId"
+
+    private companion object {
+        const val SHARING_PREFERENCES = "sharing_controls"
+    }
+}
