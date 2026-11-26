@@ -92,6 +92,12 @@ object TrackingServiceController {
     fun syncPendingCommandsFromUserAction(activity: Activity) {
         activity.startService(Intent(activity, LocationForegroundService::class.java).setAction(LocationForegroundService.ACTION_SYNC_PENDING))
     }
+
+    fun refreshNotification(context: Context) {
+        runCatching {
+            context.startService(Intent(context, LocationForegroundService::class.java).setAction(LocationForegroundService.ACTION_REFRESH_NOTIFICATION))
+        }
+    }
 }
 
 object AndroidPermissionProbe {
@@ -171,6 +177,10 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             ACTION_GLOBAL_STOP -> stopLocallyAndPersistGlobalCommand()
             ACTION_LOGOUT -> stopForLogoutLocally()
             ACTION_SYNC_PENDING -> syncPendingCommands()
+            ACTION_REFRESH_NOTIFICATION -> {
+                val permission = currentPermission
+                if (started && permission != null) updateNotification(statusFor(permission)) else stopSelf(startId)
+            }
             else -> stopSelf(startId)
         }
         return START_NOT_STICKY
@@ -211,6 +221,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private fun stopForLogoutLocally() {
         val installed = runtime ?: runCatching { TrackingRuntimeRegistry.provider?.create(this) }.getOrNull()
         stopLocationCollection()
+        installed?.onGlobalStop?.invoke()
         installed?.queue?.invalidatePrivateRecords()
         waitingForStopSync = false
         pendingStopScope = null
@@ -262,6 +273,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         registerNetworkCallback()
         mainHandler.post(permissionWatch)
         flushQueue()
+        updateNotification(statusFor(permission))
     }
 
     private fun refreshPermissionAndConsent() {
@@ -369,6 +381,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         }
         val scope = activeScope ?: runCatching { installed?.scopeProvider() }.getOrNull()
         stopLocationCollection()
+        installed?.onGlobalStop?.invoke()
         waitingForStopSync = false
         val persisted = scope?.let { sync?.stopAllLocally(it) } ?: false
         if (!persisted) {
@@ -391,6 +404,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
 
     private fun invalidateAndStop(status: TrackingStatus) {
         runtime?.queue?.invalidatePrivateRecords()
+        runtime?.onTrackingStatus?.invoke(status)
         stopLocationCollection()
         finishService(finalStatus = status)
     }
@@ -560,11 +574,22 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             Intent(this, LocationForegroundService::class.java).setAction(ACTION_GLOBAL_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val trip = TripProgressNotificationFormatter.format(runCatching { runtime?.tripProgressNotification?.invoke() }.getOrNull())
+        val publicVersion = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle(trip?.publicTitle ?: "OpenTrack360 location sharing")
+            .setContentText(trip?.publicBody ?: statusText)
+            .setCategory(if (trip != null) NotificationCompat.CATEGORY_NAVIGATION else NotificationCompat.CATEGORY_SERVICE)
+            .build()
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("OpenTrack360 location sharing")
-            .setContentText(statusText)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentTitle(trip?.title ?: "OpenTrack360 location sharing")
+            .setContentText(trip?.body ?: statusText)
+            .setSubText(if (trip != null) statusText else null)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(trip?.body ?: statusText))
+            .setCategory(if (trip != null) NotificationCompat.CATEGORY_NAVIGATION else NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop sharing", stopIntent)
@@ -577,6 +602,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         manager.createNotificationChannel(
             NotificationChannel(NOTIFICATION_CHANNEL_ID, "Location sharing", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Shows when OpenTrack360 is sharing this phone's location"
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             },
         )
     }
@@ -631,6 +657,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         const val ACTION_GLOBAL_STOP = "me.srishanth.opentrack360.tracking.GLOBAL_STOP"
         const val ACTION_LOGOUT = "me.srishanth.opentrack360.tracking.LOGOUT"
         const val ACTION_SYNC_PENDING = "me.srishanth.opentrack360.tracking.SYNC_PENDING"
+        const val ACTION_REFRESH_NOTIFICATION = "me.srishanth.opentrack360.tracking.REFRESH_NOTIFICATION"
         const val EXTRA_USER_INITIATED = "user_initiated"
         private const val NOTIFICATION_ID = 3601
         private const val STOP_PENDING_INTENT_REQUEST = 3602

@@ -662,16 +662,40 @@ fun OpenTrackAppRoot(
                     val base = circlePath ?: return@LaunchedEffect
                     val rows = list("$base/trips")
                     val active = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.firstOrNull { it.optString("status") == "active" }
-                    tripState = if (active == null) TripProgressUiState(condition = DataCondition.CONFIRMED, message = "No active trip is shared with this Circle.") else TripProgressUiState(
-                        active = true,
-                        tripId = active.optString("id").takeIf(String::isNotBlank),
-                        confirmedDriving = active.optBoolean("confirmedDrive", tripState.confirmedDriving && active.optString("id") == tripState.tripId),
-                        condition = DataCondition.CONFIRMED,
-                        message = "Trip progress is available to its selected Circle recipients.",
-                        destinationLabel = active.optNullableString("destinationLabel"),
-                        etaLabel = active.optNullableString("estimatedArrivalAt")?.let(::formatLocalTime),
-                        distanceRemainingMeters = active.optNullableInt("distanceRemainingMeters"),
-                    )
+                    if (active == null) {
+                        tripState.tripId?.let { previousTripId -> session?.memberId?.let { memberId ->
+                            runtime.clearTripLockScreenProgress(memberId, previousTripId)
+                            TrackingServiceController.refreshNotification(activity)
+                        } }
+                        tripLockScreen = false
+                        tripState = TripProgressUiState(condition = DataCondition.CONFIRMED, message = "No active trip is shared with this Circle.")
+                    } else {
+                        val tripId = active.optString("id").takeIf(String::isNotBlank)
+                        val memberId = session?.memberId
+                        val lockScreenEnabled = if (active.has("shareLockScreenProgress")) {
+                            active.optBoolean("shareLockScreenProgress")
+                        } else {
+                            tripId != null && memberId != null && runtime.isTripLockScreenProgressEnabled(memberId, tripId)
+                        }
+                        val destination = active.optNullableString("destinationLabel")
+                        val eta = active.optNullableString("estimatedArrivalAt")?.let(::formatLocalTime)
+                        val distance = active.optNullableInt("distanceRemainingMeters")
+                        tripLockScreen = lockScreenEnabled
+                        tripState = TripProgressUiState(
+                            active = true,
+                            tripId = tripId,
+                            confirmedDriving = active.optBoolean("confirmedDrive", tripState.confirmedDriving && tripId == tripState.tripId),
+                            condition = DataCondition.CONFIRMED,
+                            message = "Trip progress is available to its selected Circle recipients.",
+                            destinationLabel = destination,
+                            etaLabel = eta,
+                            distanceRemainingMeters = distance,
+                        )
+                        if (tripId != null && memberId != null) {
+                            runtime.setTripLockScreenProgress(memberId, tripId, lockScreenEnabled, destination, eta, distance)
+                            TrackingServiceController.refreshNotification(activity)
+                        }
+                    }
                 }
                 AppPage.MORNING -> {
                     val base = circlePath ?: return@LaunchedEffect
@@ -1437,7 +1461,18 @@ fun OpenTrackAppRoot(
                         },
                         onDestinationChange = { tripDestination = it }, onDestinationLatitudeChange = { tripLatitude = it }, onDestinationLongitudeChange = { tripLongitude = it },
                         onRecipientSelected = { id, selected -> tripRecipients = if (selected) tripRecipients + id else tripRecipients - id },
-                        onShareLockScreenProgressChange = { tripLockScreen = it },
+                        onShareLockScreenProgressChange = { enabled ->
+                            tripLockScreen = enabled
+                            val memberId = session?.memberId
+                            val tripId = tripState.tripId
+                            if (memberId != null && tripId != null) {
+                                runtime.setTripLockScreenProgress(
+                                    memberId, tripId, enabled, tripState.destinationLabel, tripState.etaLabel,
+                                    tripState.distanceRemainingMeters,
+                                )
+                                TrackingServiceController.refreshNotification(activity)
+                            }
+                        },
                         onConfirmDrivingChange = { confirmDriving = it },
                         onStartTrip = { label, latitude, longitude, ids, lockScreen, memberConfirmedDriving ->
                             val circleId = selectedCircleId ?: return@TripProgressScreen
@@ -1463,6 +1498,11 @@ fun OpenTrackAppRoot(
                                             else "Trip started. Use End this trip to stop progress. Circle sharing and guest links stay active until you pause or revoke them.",
                                         destinationLabel = label,
                                     )
+                                    val memberId = session?.memberId
+                                    if (memberId != null) {
+                                        runtime.setTripLockScreenProgress(memberId, tripId, lockScreen, label, null, null)
+                                        TrackingServiceController.refreshNotification(activity)
+                                    }
                                     confirmDriving = false
                                     if (!trackingStatus.isActiveTrackingStatus()) {
                                         runtime.setSharingConsent(session!!.memberId, true)
@@ -1488,7 +1528,12 @@ fun OpenTrackAppRoot(
                                 .put("clientRequestId", java.util.UUID.randomUUID().toString())
                                 .put("endReason", reason)) }
                                 .onSuccess {
+                                    session?.memberId?.let { memberId ->
+                                        runtime.clearTripLockScreenProgress(memberId, id)
+                                        TrackingServiceController.refreshNotification(activity)
+                                    }
                                     tripState = tripState.copy(active = false, tripId = null, confirmedDriving = false, condition = DataCondition.CONFIRMED, message = "This trip has ended. Circle sharing and guest links remain active.")
+                                    tripLockScreen = false
                                     confirmDriving = false
                                     reloadHome++
                                 }

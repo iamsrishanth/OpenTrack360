@@ -18,6 +18,7 @@ import me.srishanth.opentrack360.tracking.TrackingRuntimeProvider
 import me.srishanth.opentrack360.tracking.TrackingScope
 import me.srishanth.opentrack360.tracking.TrackingStatus
 import me.srishanth.opentrack360.tracking.TrackingEngine
+import me.srishanth.opentrack360.tracking.TripProgressNotificationContent
 import java.util.UUID
 
 /** App-scoped clients. No backend service credential is shipped in the APK. */
@@ -39,6 +40,9 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
     val trackingStatus = mutableTrackingStatus.asStateFlow()
     private val mutableDriveUpdate = MutableStateFlow<DriveUpdate?>(null)
     val latestDriveUpdate = mutableDriveUpdate.asStateFlow()
+    @Volatile private var liveTripProgressNotification: TripProgressNotificationContent? = null
+    @Volatile private var liveTripProgressMemberId: String? = null
+    @Volatile private var liveTripProgressTripId: String? = null
 
     fun startMemberSession(memberId: String): String {
         val sessionId = UUID.randomUUID().toString()
@@ -92,6 +96,44 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
 
     fun sharingEpoch(memberId: String): Long = sharingPreferences.getLong(epochKey(memberId), 1)
 
+    fun isTripLockScreenProgressEnabled(memberId: String, tripId: String): Boolean =
+        sharingPreferences.getBoolean(tripLockScreenKey(memberId, tripId), false)
+
+    /** Persist only the opt-in bit; destination and ETA stay in memory and are never written to disk. */
+    fun setTripLockScreenProgress(
+        memberId: String,
+        tripId: String,
+        enabled: Boolean,
+        destinationLabel: String?,
+        etaLabel: String?,
+        distanceRemainingMeters: Int?,
+    ) {
+        val editor = sharingPreferences.edit()
+        if (enabled) editor.putBoolean(tripLockScreenKey(memberId, tripId), true)
+        else editor.remove(tripLockScreenKey(memberId, tripId))
+        editor.commit()
+        liveTripProgressMemberId = memberId
+        liveTripProgressTripId = tripId
+        liveTripProgressNotification = if (enabled) TripProgressNotificationContent(
+            destinationLabel = destinationLabel,
+            etaLabel = etaLabel,
+            distanceRemainingMeters = distanceRemainingMeters,
+        ) else null
+    }
+
+    fun clearTripLockScreenProgress(memberId: String, tripId: String?) {
+        if (tripId != null) sharingPreferences.edit().remove(tripLockScreenKey(memberId, tripId)).commit()
+        if (liveTripProgressMemberId == memberId && (tripId == null || liveTripProgressTripId == tripId)) {
+            clearLiveTripProgressNotification()
+        }
+    }
+
+    private fun clearLiveTripProgressNotification() {
+        liveTripProgressNotification = null
+        liveTripProgressMemberId = null
+        liveTripProgressTripId = null
+    }
+
     override fun create(context: Context): TrackingRuntime = TrackingRuntime(
         queue = trackingQueue,
         transport = trackingTransport,
@@ -125,9 +167,26 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
             sessions.load()?.let { sharingIsEnabled(it.memberId) } ?: false
         },
         activeDriveEndShareIds = { mutableDriveEndShares.value.toList() },
-        onTrackingStatus = { mutableTrackingStatus.value = it },
         onDriveUpdate = { mutableDriveUpdate.value = it },
         onSharingEpoch = { memberId, epoch -> updateSharingEpoch(memberId, epoch) },
+        onTrackingStatus = { status ->
+            mutableTrackingStatus.value = status
+            if (status in setOf(TrackingStatus.STOPPED, TrackingStatus.PERMISSION_LOST, TrackingStatus.CONSENT_REVOKED)) {
+                clearLiveTripProgressNotification()
+            }
+        },
+        tripProgressNotification = { liveTripProgressNotification },
+        onGlobalStop = {
+            val memberId = sessions.load()?.memberId
+            if (memberId != null) {
+                val editor = sharingPreferences.edit()
+                sharingPreferences.all.keys
+                    .filter { it.startsWith("trip_lock_screen_${memberId}_") }
+                    .forEach(editor::remove)
+                editor.commit()
+            }
+            clearLiveTripProgressNotification()
+        },
     )
 
     private fun generation(memberId: String): Long = sharingPreferences.getLong(generationKey(memberId), 0)
@@ -139,6 +198,7 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
     private fun lastPrecisionKey(memberId: String) = "last_precision_$memberId"
     private fun sharingEnabledKey(memberId: String) = "sharing_enabled_$memberId"
     private fun activityConsentKey(memberId: String, circleId: String) = "activity_consent_${memberId}_$circleId"
+    private fun tripLockScreenKey(memberId: String, tripId: String) = "trip_lock_screen_${memberId}_$tripId"
 
     private companion object {
         const val SHARING_PREFERENCES = "sharing_controls"

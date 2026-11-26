@@ -147,6 +147,8 @@ data class TrackingRuntime(
     val onSharingEpoch: (String, Long) -> Unit = { _, _ -> },
     val onTrackingStatus: (TrackingStatus) -> Unit = {},
     val onDriveUpdate: (DriveUpdate) -> Unit = {},
+    val tripProgressNotification: () -> TripProgressNotificationContent? = { null },
+    val onGlobalStop: () -> Unit = {},
 )
 
 enum class TrackingStatus {

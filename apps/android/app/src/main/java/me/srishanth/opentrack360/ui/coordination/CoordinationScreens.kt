@@ -562,6 +562,13 @@ fun TripProgressScreen(
                 state.etaLabel?.let { LabeledValue("Estimated arrival", it) }
                 state.distanceRemainingMeters?.let { LabeledValue("Distance remaining", "${it / 1000.0} km") }
                 Text("ETA is an estimate and may be unavailable when trip data is stale.")
+                androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Show trip progress on the lock screen")
+                        Text("Android may hide destination and ETA according to your lock-screen settings.")
+                    }
+                    Switch(checked = shareLockScreenProgress, onCheckedChange = onShareLockScreenProgressChange)
+                }
                 state.tripId?.let { tripId ->
                     DestructiveActionButton(
                         action = DestructiveAction(DestructiveActionKind.STOP_TRIP, state.destinationLabel ?: "this trip"),
@@ -594,6 +601,7 @@ fun TripProgressScreen(
                     Text("Show progress on the lock screen", modifier = Modifier.weight(1f))
                     Switch(checked = shareLockScreenProgress, onCheckedChange = onShareLockScreenProgressChange)
                 }
+                Text("Destination and ETA appear in the ongoing location notification when enabled. Android may hide details on the lock screen.")
                 Text("Members will see trip status and an estimated arrival when available.")
                 ConsentActionButton(
                     label = "Start trip",
