@@ -1,0 +1,11 @@
+{
+  "id": "5774b531-65ac-4bbd-91ee-0eb77b4b064f",
+  "circleId": "fcac8f75-31c3-4866-bfb6-733f43b0fd90",
+  "name": "Home",
+  "latitude": 19.076,
+  "longitude": 72.8777,
+  "radiusMeters": 150,
+  "alertOnArrival": true,
+  "alertOnDeparture": false,
+  "createdAt": "2026-11-26T10:00:00Z"
+}

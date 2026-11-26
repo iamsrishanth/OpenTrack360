@@ -1,0 +1,14 @@
+{
+  "name": "opentrack360",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "scripts": {
+    "dev": "npm --workspace @opentrack360/web run dev",
+    "build": "npm --workspace @opentrack360/web run build",
+    "vercel-build": "npm run build",
+    "start": "npm --workspace @opentrack360/web run start",
+    "typecheck": "npm --workspace @opentrack360/web run typecheck",
+    "test:api": "npm --workspace @opentrack360/web run test:api"
+  }
+}

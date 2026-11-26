@@ -14,3 +14,17 @@ local.properties
 
 # Local Codex worktrees
 .worktrees/
+
+# JavaScript tooling and generated files
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+coverage/
+.tsbuildinfo
+*.tsbuildinfo
+.vercel/
+*.log
+Thumbs.db
+desktop.ini

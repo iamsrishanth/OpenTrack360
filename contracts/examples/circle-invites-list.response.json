@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "id": "73cefe68-06f3-48d0-9533-4cecbce9fdb2",
+      "role": "member",
+      "expiresAt": "2026-11-29T10:00:00Z",
+      "maxUses": 1,
+      "uses": 0,
+      "createdAt": "2026-11-26T10:00:00Z"
+    }
+  ],
+  "nextCursor": null
+}

@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "accountId": "a0a9e1c4-0776-4c20-9367-48d020a0ec7d",
+      "username": "aarav",
+      "displayName": "Aarav Mehta",
+      "status": "active",
+      "mustRotatePassword": false,
+      "createdAt": "2026-11-27T05:00:00Z"
+    }
+  ],
+  "nextCursor": null
+}
