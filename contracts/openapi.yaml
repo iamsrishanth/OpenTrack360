@@ -1,0 +1,1706 @@
+openapi: 3.1.0
+info:
+  title: OpenTrack360 API
+  version: 1.0.0
+  description: >-
+    Versioned Android and web API. API timestamps are RFC 3339 UTC; latitude and
+    longitude are decimal degrees, horizontal accuracy is metres, and speed is
+    metres per second. Authenticated member endpoints derive the member from
+    their validated session. A guest share secret is sent only in the Authorization
+    header; it must never be included in a query string or initial page request.
+servers:
+  - url: https://track.srishanth.me/api/v1
+    description: Production API
+tags:
+  - name: Auth
+  - name: Member
+  - name: Location
+  - name: Shares
+  - name: Guest
+  - name: Circles
+  - name: Places
+  - name: Coordination
+  - name: Safety
+  - name: Pets
+  - name: Privacy
+  - name: Platform Admin
+security:
+  - memberBearer: []
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      security: []
+      summary: Sign in with a provisioned username and password
+      description: Public account creation is disabled. Errors do not distinguish unknown, disabled, or incorrect credentials. Rate limited by username and client address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            examples:
+              firstLogin:
+                value: { username: aarav, password: Temp-Pass-7vNQ! }
+      responses:
+        '200':
+          description: Authenticated session; data access remains blocked when password rotation is required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemberSession' }
+              examples:
+                rotationRequired:
+                  value:
+                    accessToken: synthetic-access-token
+                    refreshToken: synthetic-refresh-token
+                    tokenType: Bearer
+                    expiresInSeconds: 3600
+                    user: { id: 1bcb3a8e-0d22-4b0a-a910-510fd4547f61, username: aarav, mustRotatePassword: true }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshSession
+      security: []
+      summary: Refresh a member session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, minLength: 20 }
+      responses:
+        '200':
+          description: Rotated session tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemberSession' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke the current refresh session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, minLength: 20 }
+      responses:
+        '200':
+          description: Current refresh session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties: { revoked: { type: boolean, const: true } }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /me:
+    get:
+      tags: [Member]
+      operationId: getCurrentMember
+      summary: Read the caller's own public profile
+      responses:
+        '200':
+          description: Current member profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemberProfile' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '428': { $ref: '#/components/responses/PasswordRotationRequired' }
+  /me/password:
+    post:
+      tags: [Member]
+      operationId: changePassword
+      summary: Change the caller's password and invalidate other sessions
+      description: Requires the current password. Successful change increments the server session epoch, revokes outstanding refresh sessions and requires a fresh login. No member data is returned by this operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, minLength: 1, writeOnly: true }
+                newPassword: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+      responses:
+        '200':
+          description: Password changed; all previous sessions are invalidated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changed, sessionsRevoked, reauthenticationRequired]
+                properties:
+                  changed: { type: boolean, const: true }
+                  sessionsRevoked: { type: boolean, const: true }
+                  reauthenticationRequired: { type: boolean, const: true }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /me/stop-sharing:
+    post:
+      tags: [Member]
+      operationId: stopAllSharing
+      summary: Stop the caller's location sharing and revoke every active guest link
+      description: >-
+        Idempotently advances the member sharing epoch, disables Circle sharing,
+        ends active trips and revokes all active guest links in one server-side
+        transaction. Android stops collection immediately and persists this
+        idempotent command while offline; on reconnect it sends this command
+        before any queued data. The server rejects queued fixes from older
+        sharing epochs. A client must not upload old queued fixes after a stop.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [clientRequestId]
+              properties:
+                clientRequestId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: All server-side sharing state stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stopped, endedShareCount, sharingEpoch]
+                properties:
+                  stopped: { type: boolean, const: true }
+                  endedShareCount: { type: integer, minimum: 0 }
+                  sharingEpoch: { type: integer, minimum: 1 }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '428': { $ref: '#/components/responses/PasswordRotationRequired' }
+  /locations/batch:
+    post:
+      tags: [Location]
+      operationId: uploadLocationBatch
+      summary: Upload bounded, replay-safe location samples
+      description: >-
+        Maximum 100 samples per request. sampleId is an idempotency key. Samples
+        are validated for coordinate bounds, accuracy, clock skew and per-user
+        ordering. The server derives the owner from the session; callers cannot
+        choose another member. Samples older than a share's startedAt are never
+        released through that share. A terminal share rejects samples captured
+        after its accepted ending event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LocationBatchRequest' }
+            examples:
+              syntheticRoute:
+                value:
+                  samples:
+                    - sampleId: 10c0f632-7ad5-4d4e-8ae4-f72e98e9678c
+                      capturedAt: '2026-11-26T10:00:00Z'
+                      latitude: 19.076
+                      longitude: 72.8777
+                      accuracyMeters: 12.5
+                      speedMps: 8.4
+      responses:
+        '200':
+          description: Per-sample accepted, duplicate, or rejected results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocationBatchResult' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '428': { $ref: '#/components/responses/PasswordRotationRequired' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /shares:
+    get:
+      tags: [Shares]
+      operationId: listShares
+      summary: List the caller's guest links without exposing their secrets
+      description: The secret-bearing URL is returned only when a share is created. Lists never contain a secret, digest, or complete URL.
+      responses:
+        '200':
+          description: Caller's shares and expiry state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareList' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '428': { $ref: '#/components/responses/PasswordRotationRequired' }
+    post:
+      tags: [Shares]
+      operationId: createShare
+      summary: Create a guest trip share
+      description: Returns the complete secret-bearing link once. Persist only a digest of the 256-bit random secret. The URL fragment is not sent to the web server on initial navigation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateShareRequest' }
+            examples:
+              untilDriveEnd:
+                value: { mode: drive_end }
+              untilTime:
+                value: { mode: time, expiresAt: '2026-11-26T12:00:00Z' }
+              destination:
+                value:
+                  mode: destination
+                  destination: { latitude: 19.076, longitude: 72.8777, radiusMeters: 150 }
+      responses:
+        '201':
+          description: Share created; full URL is returned only here
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedShare' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '428': { $ref: '#/components/responses/PasswordRotationRequired' }
+  /shares/{shareId}:
+    parameters:
+      - { $ref: '#/components/parameters/ShareId' }
+    delete:
+      tags: [Shares]
+      operationId: revokeShare
+      summary: Revoke a share idempotently
+      responses:
+        '200':
+          description: Share is terminal and cannot be revived
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, endedAt]
+                properties:
+                  revoked: { type: boolean, const: true }
+                  endedAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /shares/{shareId}/events:
+    parameters:
+      - { $ref: '#/components/parameters/ShareId' }
+    post:
+      tags: [Shares]
+      operationId: submitShareEvent
+      summary: Submit bounded evidence for arrival or drive-end
+      description: >-
+        Offline clients submit the locally detected terminal event and its
+        bounded evidence before uploading any later fixes. The server verifies
+        evidence using the authenticated owner, timestamps, ordering, accuracy,
+        and server-side thresholds. First confirmed ending wins. A parked start,
+        GPS gap, poor accuracy, traffic stop, duplicate or late request cannot
+        end or revive a share.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShareEventRequest' }
+      responses:
+        '200':
+          description: Event accepted, pending more evidence, or duplicate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareEventResult' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/ShareEnded' }
+  /public/shares/{shareId}:
+    parameters:
+      - { $ref: '#/components/parameters/ShareId' }
+    get:
+      tags: [Guest]
+      operationId: readPublicShare
+      security:
+        - shareSecret: []
+      summary: Read only the latest location for one active share
+      description: >-
+        The secret is read from the URL fragment by the browser and sent as
+        Authorization: Bearer. A missing/invalid secret and unknown ID both
+        return the same 404. Ended, expired, disabled-owner, or revoked shares
+        return 410 without any location. Every response is Cache-Control:
+        private, no-store and must not be logged with credentials or coordinates.
+        Normal polling is about every 10 seconds. Successful reads grant at most
+        30 seconds of display; clear cached coordinates when that window lapses.
+        Data older than 90 seconds is returned as signal_lost with latest null.
+      responses:
+        '200':
+          description: Current share state; latest is null while waiting or signal is lost
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+            Referrer-Policy: { schema: { type: string, const: no-referrer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicShare' }
+              examples:
+                waiting:
+                  value:
+                    status: waiting
+                    serverTime: '2026-11-26T10:00:00Z'
+                    viewValidUntil: '2026-11-26T10:00:30Z'
+                    latest: null
+                active:
+                  value:
+                    status: active
+                    serverTime: '2026-11-26T10:00:10Z'
+                    viewValidUntil: '2026-11-26T10:00:40Z'
+                    latest:
+                      latitude: 19.076
+                      longitude: 72.8777
+                      accuracyMeters: 12.5
+                      capturedAt: '2026-11-26T10:00:08Z'
+                      speedMps: 8.4
+                signalLost:
+                  value:
+                    status: signal_lost
+                    serverTime: '2026-11-26T10:02:00Z'
+                    viewValidUntil: '2026-11-26T10:02:30Z'
+                    latest: null
+        '404':
+          description: Unknown share or invalid/missing bearer secret; no location
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+              example: { error: { code: NOT_FOUND, message: Share not found } }
+        '410':
+          description: Valid share ended or expired; no location
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+              example: { error: { code: SHARE_ENDED, message: Share is no longer active } }
+  /circles:
+    get:
+      tags: [Circles]
+      operationId: listCircles
+      summary: List only Circles the caller belongs to
+      responses:
+        '200':
+          description: Circles visible to the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CircleList' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+    post:
+      tags: [Circles]
+      operationId: createCircle
+      summary: Create a private, invitation-only Circle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CircleInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /circles/{circleId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Circles]
+      operationId: getCircle
+      summary: Read a Circle after membership validation
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Circles]
+      operationId: updateCircle
+      summary: Update Circle settings; only Circle admins may change admin-managed settings
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Circles]
+      operationId: leaveCircle
+      summary: Leave a Circle; removal and history access are enforced immediately
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/invites:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Circles]
+      operationId: listCircleInvites
+      summary: List active invites for Circle admins
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Circles]
+      operationId: createCircleInvite
+      summary: Create an expiring invitation for an existing provisioned account
+      description: Invite tokens expire within 72 hours and cannot create platform accounts.
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circle-invites/{inviteToken}/accept:
+    parameters:
+      - name: inviteToken
+        in: path
+        required: true
+        schema: { type: string, minLength: 20 }
+    post:
+      tags: [Circles]
+      operationId: acceptCircleInvite
+      summary: Accept an invitation as the authenticated, already provisioned member
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /circles/{circleId}/members:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Circles]
+      operationId: listCircleMembers
+      summary: List members only for an active Circle member
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/members/{memberId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { $ref: '#/components/parameters/MemberId' }
+    patch:
+      tags: [Circles]
+      operationId: updateCircleMember
+      summary: Update Circle-scoped role, consent, or sharing state
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Circles]
+      operationId: removeCircleMember
+      summary: Remove a member from this Circle; only its admins may remove others
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/map:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Circles]
+      operationId: getCircleMap
+      summary: Read latest consenting Circle locations with Bubble precision enforced
+      description: Requires active membership and each member's current sharing consent. A Bubble result is approximate and precise coordinates are not exposed through another route.
+      responses:
+        '200':
+          description: Current consenting Circle members; location precision is resolved before serialization
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CircleMap' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/history:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Circles]
+      operationId: getCircleHistory
+      summary: Read bounded Circle history under current membership and precision policy
+      parameters:
+        - { name: memberId, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 500 } }
+      responses:
+        '200':
+          description: Bounded historical route data allowed by current membership and precision rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocationHistory' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/sharing:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    put:
+      tags: [Circles]
+      operationId: setCircleSharing
+      summary: Pause or resume the caller's location sharing for this Circle
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/bubbles:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Circles]
+      operationId: listBubbles
+      summary: Read active Circle Bubbles without revealing hidden precise positions
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Circles]
+      operationId: createBubble
+      summary: Create a time-limited approximate-location Bubble
+      description: Bubble duration is at most six hours. Radius and returned coordinates are approximate. Emergency and member burst events can end it.
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/bubbles/{bubbleId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: bubbleId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Circles]
+      operationId: endBubble
+      summary: End or burst an active Bubble
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/places:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Places]
+      operationId: listPlaces
+      summary: List Places visible to this Circle
+      responses:
+        '200':
+          description: Places for this Circle; destination coordinates are private Circle data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Places]
+      operationId: createPlace
+      summary: Create a named, private Circle Place
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaceInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/places/{placeId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: placeId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Places]
+      operationId: updatePlace
+      summary: Update a Circle Place or its geofence radius
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaceInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Places]
+      operationId: deletePlace
+      summary: Delete a Circle Place
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/places/{placeId}/rules:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: placeId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Places]
+      operationId: listPlaceRules
+      summary: List geofence and No Show rules for a Place
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Places]
+      operationId: createPlaceRule
+      summary: Create arrival, departure, one-time, or recurring No Show rules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaceRuleInput' }
+            example:
+              kind: no_show
+              expectedAt: '2026-11-26T15:00:00Z'
+              graceMinutes: 15
+              recurrence: null
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/places/{placeId}/rules/{ruleId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: placeId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: ruleId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Places]
+      operationId: updatePlaceRule
+      summary: Update a geofence or No Show rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaceRuleInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Places]
+      operationId: deletePlaceRule
+      summary: Delete a geofence or No Show rule
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/checkins:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Coordination]
+      operationId: listCheckins
+      summary: List Circle check-ins under current membership
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Coordination]
+      operationId: createCheckin
+      summary: Create a one-time check-in for selected Circle recipients
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/quick-notes:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Coordination]
+      operationId: listQuickNotes
+      summary: Read Circle Quick Notes
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Coordination]
+      operationId: createQuickNote
+      summary: Send a bounded Quick Note to this Circle
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/events:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Coordination]
+      operationId: listEvents
+      summary: List Circle events and RSVP state
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Coordination]
+      operationId: createEvent
+      summary: Create an event for selected Circle members
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/events/{eventId}/rsvp:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: eventId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Coordination]
+      operationId: updateEventRsvp
+      summary: Set or replace the caller's RSVP
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/activity-sharing:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    put:
+      tags: [Coordination]
+      operationId: setActivitySharing
+      summary: Set the caller's activity-sharing consent
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/trips:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Coordination]
+      operationId: listTrips
+      summary: List the caller's or authorized Circle members' trip progress
+      responses:
+        '200':
+          description: Trips accessible to this Circle and caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Coordination]
+      operationId: startTrip
+      summary: Start and share a trip with explicit Circle recipients and consent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TripStartRequest' }
+      responses:
+        '201':
+          description: Trip started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripSummary' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/driving/reports:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Safety]
+      operationId: getDrivingReports
+      summary: Read opt-in driving summaries measured from available phone data
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /notifications:
+    get:
+      tags: [Coordination]
+      operationId: listNotifications
+      summary: List notifications for the caller
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        '200':
+          description: Notifications for the caller; delivery state reflects the underlying channel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationList' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+    patch:
+      tags: [Coordination]
+      operationId: acknowledgeNotifications
+      summary: Acknowledge notifications for the caller
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /circles/{circleId}/emergency-contacts:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Safety]
+      operationId: listEmergencyContacts
+      summary: List accepted emergency contacts for a Circle
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Safety]
+      operationId: inviteEmergencyContact
+      summary: Invite an emergency contact for explicit acceptance
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /emergency-contact-invites/{inviteToken}/accept:
+    parameters:
+      - name: inviteToken
+        in: path
+        required: true
+        schema: { type: string, minLength: 20 }
+    post:
+      tags: [Safety]
+      operationId: acceptEmergencyContactInvite
+      summary: Accept an emergency-contact invitation
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /circles/{circleId}/sos:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    post:
+      tags: [Safety]
+      operationId: createSosAlert
+      summary: Send an in-app SOS to configured recipients in this Circle
+      description: Does not contact or imply dispatch of public emergency services. Delivery state reflects the configured channel only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SosRequest' }
+            example:
+              clientEventId: c1cb7118-2257-4e5f-92d1-74f1a44ae2c0
+              cancelCountdownSeconds: 5
+              latitude: 19.076
+              longitude: 72.8777
+              accuracyMeters: 12.5
+      responses:
+        '202':
+          description: Alert queued for configured in-app recipients
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SosResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/sos/{sosId}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: sosId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Safety]
+      operationId: cancelSosAlert
+      summary: Cancel the caller's SOS during the visible countdown
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/sos/{sosId}/acknowledge:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: sosId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Safety]
+      operationId: acknowledgeSosAlert
+      summary: Record an authenticated recipient acknowledgement
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /pets:
+    get:
+      tags: [Pets]
+      operationId: listPets
+      summary: List pets shared with the caller's Circles
+      responses:
+        '200':
+          description: Pets visible to the caller under Circle membership and consent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetList' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+    post:
+      tags: [Pets]
+      operationId: createPet
+      summary: Create a pet profile shared with selected Circles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /pets/{petId}:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Pets]
+      operationId: updatePet
+      summary: Update a pet profile
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Pets]
+      operationId: deletePet
+      summary: Delete a pet profile and its care records
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /pets/{petId}/routines:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Pets]
+      operationId: listPetRoutines
+      summary: List pet-care routines
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Pets]
+      operationId: createPetRoutine
+      summary: Create a pet-care routine or reminder
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /pets/{petId}/activity:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Pets]
+      operationId: listPetActivity
+      summary: Read pet-care activity and routine completion history
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /pets/{petId}/photo:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Pets]
+      operationId: createPetPhotoUpload
+      summary: Request a short-lived upload URL for a private pet photo
+      description: Uploaded objects remain in a private Storage bucket; reads are authorized per Circle membership and owner consent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [contentType, sizeBytes]
+              properties:
+                contentType: { type: string, enum: [image/jpeg, image/png, image/webp] }
+                sizeBytes: { type: integer, minimum: 1, maximum: 5242880 }
+      responses:
+        '201':
+          description: Short-lived private upload authorization
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uploadUrl, objectPath, expiresAt]
+                properties:
+                  uploadUrl: { type: string, format: uri }
+                  objectPath: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /pets/{petId}/routines/{routineId}/complete:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: routineId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Pets]
+      operationId: completePetRoutine
+      summary: Record a member's completion of a pet-care routine
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /lost-pets:
+    post:
+      tags: [Pets]
+      operationId: reportLostPet
+      summary: Create a consent-based lost-pet report for the owner's selected audience
+      description: No third-party search network is implied. The report is visible only to explicitly selected recipients and can be revoked by its owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LostPetReportInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /public/pets/{recoveryCode}:
+    parameters:
+      - name: recoveryCode
+        in: path
+        required: true
+        schema: { type: string, minLength: 20, maxLength: 128 }
+    get:
+      tags: [Pets]
+      operationId: readPetRecoveryCard
+      security: []
+      summary: Read the owner's consent-limited software-only pet recovery card
+      description: No account or hardware tracker is required. The high-entropy code grants access only to the owner-approved public fields and never to Circle membership or private history.
+      responses:
+        '200':
+          description: Limited pet recovery details selected by the owner
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetRecoveryCard' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /public/pets/{recoveryCode}/sightings:
+    parameters:
+      - name: recoveryCode
+        in: path
+        required: true
+        schema: { type: string, minLength: 20, maxLength: 128 }
+    post:
+      tags: [Pets]
+      operationId: submitPetSighting
+      security: []
+      summary: Submit an optional finder sighting to the owner's selected recipients
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetSightingRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/MutationResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /guardian-consents:
+    post:
+      tags: [Privacy]
+      operationId: requestGuardianConsent
+      summary: Request guardian approval for a provisioned child member
+      description: Only supports a verified, already-provisioned guardian account. Unsupported age or guardian verification flows stay unavailable until implemented and reviewed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GuardianConsentRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /guardian-consents/{consentId}/approve:
+    parameters:
+      - name: consentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Privacy]
+      operationId: approveGuardianConsent
+      summary: Record approval by the designated authenticated guardian
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /privacy/export:
+    post:
+      tags: [Privacy]
+      operationId: requestDataExport
+      summary: Request the caller's data export
+      responses:
+        '202': { $ref: '#/components/responses/MutationResult' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /privacy/deletion:
+    post:
+      tags: [Privacy]
+      operationId: requestAccountDeletion
+      summary: Request account and personal-data deletion
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '202': { $ref: '#/components/responses/MutationResult' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /admin/accounts:
+    get:
+      tags: [Platform Admin]
+      operationId: listManagedAccounts
+      security: [{ adminSession: [] }]
+      summary: List provisioned accounts for account administration only
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Platform Admin]
+      operationId: provisionAccount
+      security: [{ adminSession: [] }]
+      summary: Provision a member and display a generated temporary password once
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/accounts/{accountId}/reset:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Platform Admin]
+      operationId: resetMemberPassword
+      security: [{ adminSession: [] }]
+      summary: Perform an auditable admin-assisted password reset
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/accounts/{accountId}/disable:
+    parameters:
+      - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Platform Admin]
+      operationId: disableMemberAccount
+      security: [{ adminSession: [] }]
+      summary: Disable a member and invalidate API and database access
+      responses:
+        '200': { $ref: '#/components/responses/MutationResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/audit:
+    get:
+      tags: [Platform Admin]
+      operationId: listAccountAuditEvents
+      security: [{ adminSession: [] }]
+      summary: List account-management audit events without location history
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    memberBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Supabase JWT
+      description: Member access token. Username is the visible identity; internal Auth email is never exposed.
+    shareSecret:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url random secret
+      description: Per-share 256-bit secret, accepted only for GET /public/shares/{shareId}.
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: __Host-ot360-admin
+      description: Secure, HTTP-only, SameSite=Strict server-validated website administrator session; mutations require CSRF protection.
+  parameters:
+    ShareId:
+      name: shareId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CircleId:
+      name: circleId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MemberId:
+      name: memberId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  requestBodies:
+    CircleInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string, minLength: 1, maxLength: 80 }
+              kind: { type: string, enum: [standard, temporary, lightweight], default: standard }
+              expiresAt: { type: string, format: date-time, description: Required for temporary Circles; server validates allowed duration. }
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    GenericUnauthorized:
+      description: Missing, invalid, disabled, expired, or revoked credentials; generic response
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example: { error: { code: UNAUTHORIZED, message: Unable to authenticate } }
+    InvalidRequest:
+      description: Invalid input or policy violation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    PasswordRotationRequired:
+      description: Temporary password must be rotated before member data access
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example: { error: { code: PASSWORD_ROTATION_REQUIRED, message: Change your password to continue } }
+    RateLimited:
+      description: Request throttled; Retry-After is provided where practical
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Forbidden:
+      description: Caller does not have access to this Circle or resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Resource not found or not visible to this caller
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Conflict:
+      description: Unique username or idempotency conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    ShareEnded:
+      description: Share has ended; response contains no location
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Resource:
+      description: Resource result; fields are defined by the operation and caller scope
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ResourceEnvelope' }
+    ResourceList:
+      description: Paginated, caller-scoped resource list
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ResourceList' }
+    MutationResult:
+      description: Mutation accepted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/MutationResult' }
+  schemas:
+    CircleInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        kind: { type: string, enum: [standard, temporary, lightweight], default: standard }
+        expiresAt: { type: [string, 'null'], format: date-time, description: Required for temporary Circles; maximum duration is enforced by the server. }
+    CircleSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, role, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [standard, temporary, lightweight] }
+        role: { type: string, enum: [admin, member] }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+    CircleList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/CircleSummary' } }
+        nextCursor: { type: [string, 'null'] }
+    CircleMap:
+      type: object
+      additionalProperties: false
+      required: [data, serverTime]
+      properties:
+        serverTime: { type: string, format: date-time }
+        data: { type: array, items: { $ref: '#/components/schemas/CircleMapMember' } }
+    CircleMapMember:
+      type: object
+      additionalProperties: false
+      required: [memberId, displayName, sharingState, location]
+      properties:
+        memberId: { type: string, format: uuid }
+        displayName: { type: string }
+        sharingState: { type: string, enum: [sharing, paused, signal_lost, hidden] }
+        location:
+          oneOf:
+            - { $ref: '#/components/schemas/CircleLocation' }
+            - { type: 'null' }
+        batteryPercent: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+        activity: { type: [string, 'null'], enum: [walking, driving, stationary, unknown, null] }
+    CircleLocation:
+      type: object
+      additionalProperties: false
+      required: [latitude, longitude, accuracyMeters, capturedAt, precision]
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0 }
+        capturedAt: { type: string, format: date-time }
+        precision: { type: string, enum: [precise, bubble_approximate] }
+    LocationHistory:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [sampleId, latitude, longitude, accuracyMeters, capturedAt]
+            properties:
+              sampleId: { type: string, format: uuid }
+              latitude: { type: number, minimum: -90, maximum: 90 }
+              longitude: { type: number, minimum: -180, maximum: 180 }
+              accuracyMeters: { type: number, minimum: 0 }
+              capturedAt: { type: string, format: date-time }
+              speedMps: { type: [number, 'null'], minimum: 0 }
+              precision: { type: string, enum: [precise, bubble_approximate] }
+        nextCursor: { type: [string, 'null'] }
+    PlaceInput:
+      type: object
+      additionalProperties: false
+      required: [name, latitude, longitude, radiusMeters]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        radiusMeters: { type: integer, minimum: 50, maximum: 5000 }
+        alertOnArrival: { type: boolean, default: false }
+        alertOnDeparture: { type: boolean, default: false }
+    Place:
+      type: object
+      additionalProperties: false
+      required: [id, name, latitude, longitude, radiusMeters]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        radiusMeters: { type: integer, minimum: 50, maximum: 5000 }
+        createdAt: { type: string, format: date-time }
+    TripStartRequest:
+      type: object
+      additionalProperties: false
+      required: [recipientMemberIds]
+      properties:
+        recipientMemberIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+        destinationLabel: { type: [string, 'null'], maxLength: 120 }
+        destinationLatitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+        destinationLongitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        shareLockScreenProgress: { type: boolean, default: false }
+    TripSummary:
+      type: object
+      additionalProperties: false
+      required: [id, status, startedAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [active, ended] }
+        startedAt: { type: string, format: date-time }
+        estimatedArrivalAt: { type: [string, 'null'], format: date-time }
+        distanceRemainingMeters: { type: [number, 'null'], minimum: 0 }
+        destinationLabel: { type: [string, 'null'] }
+    NotificationList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+        nextCursor: { type: [string, 'null'] }
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [id, kind, createdAt, deliveryState]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [place_arrival, place_departure, no_show, quick_note, checkin, event, sos, low_battery, trip_progress, pet_routine] }
+        createdAt: { type: string, format: date-time }
+        deliveryState: { type: string, enum: [queued, submitted, received, acknowledged, failed] }
+        title: { type: string, maxLength: 120 }
+        body: { type: string, maxLength: 500 }
+        acknowledgedAt: { type: [string, 'null'], format: date-time }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 32, description: Case-insensitive normalized identifier. }
+        password: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+    MemberSession:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken, tokenType, expiresInSeconds, user]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        tokenType: { type: string, const: Bearer }
+        expiresInSeconds: { type: integer, minimum: 1 }
+        user:
+          type: object
+          required: [id, username, mustRotatePassword]
+          properties:
+            id: { type: string, format: uuid }
+            username: { type: string }
+            mustRotatePassword: { type: boolean }
+    MemberProfile:
+      type: object
+      required: [id, username, mustRotatePassword]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: [string, 'null'] }
+        mustRotatePassword: { type: boolean }
+    LocationSample:
+      type: object
+      additionalProperties: false
+      required: [sampleId, capturedAt, latitude, longitude, accuracyMeters, speedMps]
+      properties:
+        sampleId: { type: string, format: uuid }
+        capturedAt: { type: string, format: date-time }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0, maximum: 10000 }
+        speedMps: { type: [number, 'null'], minimum: 0, maximum: 150 }
+    LocationBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [samples]
+      properties:
+        samples:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/LocationSample' }
+    LocationBatchResult:
+      type: object
+      required: [serverTime, accepted, duplicates, rejected]
+      properties:
+        serverTime: { type: string, format: date-time }
+        accepted: { type: array, items: { type: string, format: uuid } }
+        duplicates: { type: array, items: { type: string, format: uuid } }
+        rejected:
+          type: array
+          items:
+            type: object
+            required: [sampleId, code]
+            properties:
+              sampleId: { type: string, format: uuid }
+              code: { type: string, enum: [out_of_order, too_old, future_timestamp, poor_accuracy, invalid_coordinate, after_share_end, account_disabled] }
+    CreateShareRequest:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode, expiresAt]
+          properties:
+            mode: { type: string, const: time }
+            expiresAt: { type: string, format: date-time }
+        - type: object
+          additionalProperties: false
+          required: [mode, destination]
+          properties:
+            mode: { type: string, const: destination }
+            destination:
+              type: object
+              additionalProperties: false
+              required: [latitude, longitude, radiusMeters]
+              properties:
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                radiusMeters: { type: integer, minimum: 50, maximum: 1000, default: 150 }
+        - type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode: { type: string, const: drive_end }
+    CreatedShare:
+      type: object
+      additionalProperties: false
+      required: [id, url, mode, status, startedAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri, description: The only response that contains the secret. }
+        mode: { type: string, enum: [time, destination, drive_end] }
+        status: { type: string, const: active }
+        startedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        endCondition: { type: string }
+    ShareEventRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, eventType, observedAt, evidenceFixes]
+      properties:
+        clientEventId: { type: string, format: uuid }
+        eventType: { type: string, enum: [arrival, drive_end] }
+        observedAt: { type: string, format: date-time }
+        evidenceFixes:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: '#/components/schemas/LocationSample' }
+    ShareEventResult:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, status, serverTime]
+      properties:
+        clientEventId: { type: string, format: uuid }
+        status: { type: string, enum: [confirmed, pending, duplicate] }
+        serverTime: { type: string, format: date-time }
+        endedAt: { type: [string, 'null'], format: date-time }
+        reason: { type: [string, 'null'], enum: [arrival_confirmed, drive_end_confirmed, insufficient_evidence, stale_evidence, poor_accuracy, event_already_ended, null] }
+    PublicShare:
+      type: object
+      additionalProperties: false
+      required: [status, serverTime, viewValidUntil, latest]
+      properties:
+        status: { type: string, enum: [waiting, active, signal_lost] }
+        serverTime: { type: string, format: date-time }
+        viewValidUntil: { type: string, format: date-time }
+        latest:
+          oneOf:
+            - { $ref: '#/components/schemas/PublicFix' }
+            - { type: 'null' }
+    ShareList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, mode, status, createdAt, startedAt, expiresAt]
+            properties:
+              id: { type: string, format: uuid }
+              mode: { type: string, enum: [time, destination, drive_end] }
+              status: { type: string, enum: [active, ended] }
+              createdAt: { type: string, format: date-time }
+              startedAt: { type: string, format: date-time }
+              expiresAt: { type: [string, 'null'], format: date-time }
+              endedAt: { type: [string, 'null'], format: date-time }
+              endCondition: { type: string }
+        nextCursor: { type: [string, 'null'] }
+      description: No field in this response contains the share secret, its digest, or a complete share URL.
+    PublicFix:
+      type: object
+      additionalProperties: false
+      required: [latitude, longitude, accuracyMeters, capturedAt, speedMps]
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0 }
+        capturedAt: { type: string, format: date-time }
+        speedMps: { type: [number, 'null'], minimum: 0 }
+    PlaceRuleInput:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [arrival, departure, no_show] }
+        memberIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: Empty means all consenting members of this Circle.
+        expectedAt: { type: [string, 'null'], format: date-time }
+        graceMinutes: { type: integer, minimum: 0, maximum: 1440, default: 15 }
+        recurrence:
+          oneOf:
+            - { type: object, additionalProperties: false, required: [frequency, interval], properties: { frequency: { type: string, enum: [daily, weekly] }, interval: { type: integer, minimum: 1, maximum: 52 }, weekdays: { type: array, items: { type: integer, minimum: 1, maximum: 7 } }, localTime: { type: string, pattern: '^([01]?[0-9]|2[0-3]):[0-5][0-9]$' }, timeZone: { type: string } } }
+            - { type: 'null' }
+    SosRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, cancelCountdownSeconds]
+      properties:
+        clientEventId: { type: string, format: uuid }
+        cancelCountdownSeconds: { type: integer, minimum: 0, maximum: 30, default: 5 }
+        latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+        longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        accuracyMeters: { type: [number, 'null'], minimum: 0, maximum: 10000 }
+    SosResult:
+      type: object
+      additionalProperties: false
+      required: [id, status, recipients, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, submitted, acknowledged, failed] }
+        recipients:
+          type: array
+          items:
+            type: object
+            required: [recipientId, state]
+            properties:
+              recipientId: { type: string, format: uuid }
+              state: { type: string, enum: [queued, submitted, acknowledged, failed] }
+        createdAt: { type: string, format: date-time }
+        providerMessageId: { type: [string, 'null'], description: Opaque ID only; never an FCM credential. }
+      description: Submitted means accepted by the notification provider; acknowledged requires an explicit recipient app acknowledgement.
+    PetInput:
+      type: object
+      additionalProperties: false
+      required: [name, circleIds]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        species: { type: [string, 'null'], maxLength: 40 }
+        photoObjectPath: { type: [string, 'null'] }
+        circleIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+        recoveryEnabled: { type: boolean, default: false }
+        recoveryFields:
+          type: array
+          items: { type: string, enum: [petName, species, photo, ownerMessage, contactRoute] }
+          description: Explicit allowlist of fields exposed by the software-only recovery QR.
+    PetRecoveryCard:
+      type: object
+      additionalProperties: false
+      required: [petName, species, ownerMessage]
+      properties:
+        petName: { type: string }
+        species: { type: [string, 'null'] }
+        photoUrl: { type: [string, 'null'], format: uri, description: Short-lived URL to the owner's approved pet photo. }
+        ownerMessage: { type: string, maxLength: 500 }
+        contactRoute: { type: [string, 'null'], description: Owner-controlled in-app relay or other explicitly selected contact route; no Circle roster or private phone is exposed by default. }
+    PetSightingRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1, maxLength: 1000 }
+        latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+        longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        accuracyMeters: { type: [number, 'null'], minimum: 0, maximum: 10000 }
+        contactRoute: { type: [string, 'null'], maxLength: 200, description: Optional finder-provided callback, shared only with the owner's selected recipients. }
+    GuardianConsentRequest:
+      type: object
+      additionalProperties: false
+      required: [childMemberId, guardianUsername]
+      properties:
+        childMemberId: { type: string, format: uuid }
+        guardianUsername: { type: string, minLength: 3, maxLength: 32 }
+        relationship: { type: string, enum: [parent, guardian] }
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: [string, 'null'] }
+    ResourceEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { type: object, additionalProperties: true }
+    ResourceList:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { type: object, additionalProperties: true } }
+        nextCursor: { type: [string, 'null'] }
+    MutationResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, const: true }
+        requestId: { type: [string, 'null'] }
+x-openTrack360-policy:
+  guest:
+    linkFormat: 'https://track.srishanth.me/s/{shareId}#{secret}'
+    secretBytes: 32
+    pollingSeconds: 10
+    maxDisplaySeconds: 30
+    signalLostAfterSeconds: 90
+    endedResponsesContainLocation: false
+  destinationArrival:
+    minimumFixCount: 2
+    minimumSpanSeconds: 60
+    radiusMeters: 150
+  driveEnd:
+    stationarySeconds: 300
+    requiresConfirmedDrive: true
+    gpsGapEndsShare: false
+    parkedStartEndsShare: false
+  requestLimits:
+    locationSamplesPerBatch: 100
+    eventEvidenceFixes: 10
+    circleHistoryLimit: 1000

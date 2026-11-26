@@ -1,0 +1,23 @@
+{
+  "clientEventId": "9687f7cf-aa45-45aa-9779-54235ba4cd5c",
+  "eventType": "arrival",
+  "observedAt": "2026-11-26T10:01:00Z",
+  "evidenceFixes": [
+    {
+      "sampleId": "900e1c0f-6e61-4148-9d8f-4fd05da901d8",
+      "capturedAt": "2026-11-26T10:00:00Z",
+      "latitude": 19.076,
+      "longitude": 72.8777,
+      "accuracyMeters": 12,
+      "speedMps": 0
+    },
+    {
+      "sampleId": "e203bcd4-1a86-4eb8-a0b5-e755b7ed8d2a",
+      "capturedAt": "2026-11-26T10:01:00Z",
+      "latitude": 19.0761,
+      "longitude": 72.8778,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "SHARE_ENDED",
+    "message": "Share is no longer active"
+  }
+}

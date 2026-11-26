@@ -1,0 +1,20 @@
+{
+  "samples": [
+    {
+      "sampleId": "10c0f632-7ad5-4d4e-8ae4-f72e98e9678c",
+      "capturedAt": "2026-11-26T10:00:00Z",
+      "latitude": 19.076,
+      "longitude": 72.8777,
+      "accuracyMeters": 12.5,
+      "speedMps": 8.4
+    },
+    {
+      "sampleId": "e8b4c35c-7069-4b61-8e36-b81b87c3530e",
+      "capturedAt": "2026-11-26T10:00:10Z",
+      "latitude": 19.0762,
+      "longitude": 72.878,
+      "accuracyMeters": 9.1,
+      "speedMps": 0
+    }
+  ]
+}

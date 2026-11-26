@@ -1,0 +1,12 @@
+{
+  "status": "active",
+  "serverTime": "2026-11-26T10:00:10Z",
+  "viewValidUntil": "2026-11-26T10:00:40Z",
+  "latest": {
+    "latitude": 19.076,
+    "longitude": 72.8777,
+    "accuracyMeters": 12.5,
+    "capturedAt": "2026-11-26T10:00:08Z",
+    "speedMps": 8.4
+  }
+}
