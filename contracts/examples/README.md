@@ -7,6 +7,7 @@ API base: `https://track.srishanth.me/api/v1`
 - Username is normalized server-side; the internal Supabase Auth email is never returned.
 - Member bearer tokens are sent in `Authorization`; refresh tokens are sent in request bodies only to the refresh and logout routes.
 - Guest links use `https://track.srishanth.me/s/{id}#{secret}`. The secret after `#` is read by the client and sent as `Authorization: Bearer <secret>` to `GET /public/shares/{id}`. It is never sent in a query or initial page request.
+- Software-only pet recovery QR links use `https://track.srishanth.me/p/{petId}#{secret}`. The fragment secret is sent only in the `Authorization` header to the public pet recovery routes; the path ID reveals no profile data by itself.
 - Speed is metres per second on the API. Convert to km/h for display (`m/s × 3.6`). A nullable speed is unknown; numeric zero is a measured stop.
 - The public viewer polls about every 10 seconds. Each successful response permits at most 30 seconds of display. Clear location at `viewValidUntil`; after 90 seconds without a fresh sender fix, the API returns `signal_lost` and `latest: null`.
 - Destination arrival needs two fresh, sufficiently accurate fixes at least 60 seconds apart and within 150 metres. Drive-end needs a confirmed drive and five continuous minutes of credible stationary evidence. GPS gaps, poor fixes, traffic stops, and a parked start do not end a share.

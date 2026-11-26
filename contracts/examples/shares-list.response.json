@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "id": "f28bd481-5c3c-4ea1-9fa1-0384703c23b0",
+      "mode": "drive_end",
+      "status": "active",
+      "createdAt": "2026-11-26T10:00:00Z",
+      "startedAt": "2026-11-26T10:00:00Z",
+      "expiresAt": null,
+      "endedAt": null,
+      "endCondition": "Confirmed drive end"
+    }
+  ],
+  "nextCursor": null
+}
