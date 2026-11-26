@@ -4,7 +4,7 @@
 
 **Web branch:** `teams/web-platform`
 
-**Tested implementation revision:** `5aa46d6ae1df31ce4fcbaca4cd6ed25b1bd1f852`
+**Tested implementation revision:** `4e02b168226fe43cd77e5ea6202e862289a727e6`
 **Pull request:** [#2, Expose drive-end trip evidence scope](https://github.com/iamsrishanth/OpenTrack360/pull/2) (draft)
 
 This is a dated evidence snapshot, not a claim that the complete production acceptance plan has passed. Re-run the probes after a deployment or database change.
@@ -21,21 +21,21 @@ This is a dated evidence snapshot, not a claim that the complete production acce
 | Production `/s/00000000-0000-4000-8000-000000000000` | HTTP 200 guest-viewer shell; `Cache-Control: private, no-store`; `Referrer-Policy: no-referrer`; `X-Robots-Tag: noindex, nofollow, noarchive` | The viewer shell loads without exposing a location; data still requires the fragment secret in the bearer header. |
 | Production `/admin` | HTTP 200 login shell; `Referrer-Policy: no-referrer`; `X-Robots-Tag: noindex, nofollow, noarchive` | The public HTML contains the sign-in shell only. Account data is requested from the separately authenticated, no-store API. |
 | Production `GET /.well-known/assetlinks.json` | HTTP 200, body `[]` | The file is served, but no Android package/signing association is configured. |
-| Vercel preview for `teams/web-platform` | READY at [opentrack360-3y308ymlw-srishanths-projects.vercel.app](https://opentrack360-3y308ymlw-srishanths-projects.vercel.app), revision `5aa46d6ae1df31ce4fcbaca4cd6ed25b1bd1f852` | Vercel built this source revision. The deployment is SSO-protected and is not evidence of production database acceptance. |
+| Vercel preview for `teams/web-platform` | READY at [opentrack360-7zke816bw-srishanths-projects.vercel.app](https://opentrack360-7zke816bw-srishanths-projects.vercel.app), revision `4e02b168226fe43cd77e5ea6202e862289a727e6` | Vercel built this source revision. The deployment is SSO-protected and is not evidence of production database acceptance. |
 
-The Vercel checks on PR #2 are green: `Vercel` and `Vercel Preview Comments`. The Supabase database workflow is also green for this revision: [run 45909848683](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45909848683). The current production deployment is still on the merged `main` revision above; the preview revision has not been promoted.
+The Vercel checks on PR #2 are green: `Vercel` and `Vercel Preview Comments`. The Supabase database workflow is also green for this revision: [run 45910941279](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45910941279). The current production deployment is still on the merged `main` revision above; the preview revision has not been promoted.
 
 ## Checks recorded for the web revision
 
 - `npm run test:api`: 22/22 passing.
 - `npm run typecheck`: passing.
 - Redocly lint for `contracts/openapi.yaml`: passing.
-- All 116 JSON example files parsed successfully.
+- All 118 JSON example files parsed successfully.
 - `git diff --check`: clean at the implementation checkpoint.
 - `npm audit --audit-level=high`: no high or critical findings.
 - Vercel preview build: READY; both GitHub preview checks pass.
 - Migration `20261127000300_opentrack_sos_trip_share_resume.sql` executed in temporary PGlite against minimal local schemas and synthetic function definitions. Its 17 exact source-fragment replacements applied across the dispatcher (8), share creation (1), share event validation (7), and share list (1). This checks migration patch preconditions and SQL installation in the harness; it does not validate the target Supabase schema or execute the patched business flows.
-- GitHub Actions run `45909848683` started a fresh Supabase local stack, applied all eight migrations (including `20261127000300` and `20261127000400`) with `supabase db reset`, then ran `supabase test db`: 100/100 pgTAP assertions passed. This is migration and database-function evidence against the clean local Supabase stack. It does not establish compatibility with the existing hosted Supabase project's schema, migration ledger, or data.
+- GitHub Actions run `45910941279` started a fresh Supabase local stack, applied all eight migrations (including `20261127000300` and `20261127000400`) with `supabase db reset`, then ran `supabase test db`: 100/100 pgTAP assertions passed. This is migration and database-function evidence against the clean local Supabase stack. It does not establish compatibility with the existing hosted Supabase project's schema, migration ledger, or data.
 - Migration `20261127000400_opentrack_share_trip_start_projection.sql` also executed in a temporary PGlite harness with synthetic rows. Create/list returned the linked trip ID, start time, session-match boolean and epoch; mismatched session or epoch returned `false`. The full local Supabase run now supersedes that harness as migration evidence, while the harness remains a focused projection check.
 
 ## Database and signed-in acceptance still pending
