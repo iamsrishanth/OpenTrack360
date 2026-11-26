@@ -241,8 +241,8 @@ with share_list as materialized (
 )
 select extensions.diag((select jsonb_build_object('activeTrip',jsonb_build_object('status',t.status,'sessionMatchesCurrent',
     t.started_session_id='aaaaaaaa-1111-4111-8111-111111111111','sharingEpoch',t.sharing_epoch))
-    from private.trips t where t.id='51515151-5151-4515-8515-515151515151')::text);
-select extensions.ok(exists(
+    from private.trips t where t.id='51515151-5151-4515-8515-515151515151')::text),
+  extensions.ok(exists(
   select 1 from share_list, jsonb_array_elements(share_list.data) item(value)
   where item.value->>'id'='20202020-2020-4202-8202-202020202020'
     and item.value->'destination'=jsonb_build_object('latitude',19,'longitude',72,'radiusMeters',150)
@@ -255,7 +255,7 @@ select extensions.ok(exists(
       and (item.value->>'tripSessionMatchesCurrent')::boolean
       and (item.value->>'sharingEpoch')::bigint=1
       and not (item.value ? 'url') and not (item.value ? 'secret') and not (item.value ? 'sessionId')),
-  'sender share list restores destination and the exact drive/session/epoch binding without a secret');
+  'sender share list restores destination and the exact drive/session/epoch binding without a secret') from share_list;
 update private.guest_shares set status='ended',ended_at=now(),end_reason='test_cleanup'
   where id in ('55555555-5555-4555-8555-555555555555','10101010-1010-4101-8101-101010101010');
 update private.trips set status='ended',ended_at=now(),end_reason='test_cleanup'
