@@ -9,6 +9,10 @@
       "expiresAt": null,
       "endedAt": null,
       "destination": null,
+      "tripId": "71717171-7171-4717-8717-717171717171",
+      "tripStartedAt": "2026-11-26T09:30:00Z",
+      "tripSessionMatchesCurrent": true,
+      "sharingEpoch": 1,
       "endCondition": "Confirmed drive end"
     },
     {
@@ -24,6 +28,10 @@
         "longitude": 72.8777,
         "radiusMeters": 150
       },
+      "tripId": null,
+      "tripStartedAt": null,
+      "tripSessionMatchesCurrent": null,
+      "sharingEpoch": 1,
       "endCondition": "After confirmed arrival at destination"
     }
   ],

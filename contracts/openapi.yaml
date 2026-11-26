@@ -2321,7 +2321,7 @@ components:
     CreatedShare:
       type: object
       additionalProperties: false
-      required: [id, url, mode, status, startedAt, createdAt]
+      required: [id, url, mode, status, startedAt, createdAt, tripId, tripStartedAt, tripSessionMatchesCurrent, sharingEpoch]
       properties:
         id: { type: string, format: uuid }
         url: { type: string, format: uri, description: The only response that contains the secret. }
@@ -2331,6 +2331,10 @@ components:
         createdAt: { type: string, format: date-time }
         expiresAt: { type: [string, 'null'], format: date-time }
         endCondition: { type: string }
+        tripId: { type: [string, 'null'], format: uuid, description: Sender-only identifier of the exact trip linked to a drive_end share; null for other modes. }
+        tripStartedAt: { type: [string, 'null'], format: date-time, description: Sender-only start time of the exact confirmed trip linked to a drive_end share; null for other modes. }
+        tripSessionMatchesCurrent: { type: [boolean, 'null'], description: Sender-only signal that the linked trip is still active and its original session and sharing epoch match this authenticated session; null for other modes. }
+        sharingEpoch: { type: integer, minimum: 1, description: Account sharing epoch stored on this share; compare against GET /me before resuming local evidence. }
     ShareEventRequest:
       type: object
       additionalProperties: false
@@ -2377,7 +2381,7 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, mode, status, createdAt, startedAt, expiresAt, destination]
+            required: [id, mode, status, createdAt, startedAt, expiresAt, destination, tripId, tripStartedAt, tripSessionMatchesCurrent, sharingEpoch]
             properties:
               id: { type: string, format: uuid }
               mode: { type: string, enum: [time, destination, drive_end] }
@@ -2386,6 +2390,10 @@ components:
               startedAt: { type: string, format: date-time }
               expiresAt: { type: [string, 'null'], format: date-time }
               endedAt: { type: [string, 'null'], format: date-time }
+              tripId: { type: [string, 'null'], format: uuid, description: Sender-only identifier of the exact trip linked to a drive_end share; null for other modes. }
+              tripStartedAt: { type: [string, 'null'], format: date-time, description: Sender-only start time of the exact linked drive_end trip; null for other modes. }
+              tripSessionMatchesCurrent: { type: [boolean, 'null'], description: True only when the linked trip is still active and its original authenticated session and sharing epoch still match this caller; null for other modes. }
+              sharingEpoch: { type: integer, minimum: 1, description: Epoch stored on this share; compare with GET /me before resuming local evidence. }
               destination:
                 oneOf:
                   - type: object
@@ -2398,7 +2406,7 @@ components:
                   - type: 'null'
               endCondition: { type: string }
         nextCursor: { type: [string, 'null'] }
-      description: Sender-only response. Destination data lets the owner resume local arrival monitoring after restart; it is never returned to the guest. No field contains the share secret, its digest, or a complete share URL.
+      description: Sender-only response. Destination data lets the owner resume local arrival monitoring after restart. For drive_end, tripId and tripStartedAt identify the exact linked trip; tripSessionMatchesCurrent and sharingEpoch let the owner decide whether local evidence can resume. Moving evidence may predate share creation only when tripSessionMatchesCurrent is true and the sample is at or after tripStartedAt. Stationary evidence and destination evidence remain post-share-start. These fields are never returned to the guest. No field contains the share secret, its digest, or a complete share URL.
     PublicFix:
       type: object
       additionalProperties: false
