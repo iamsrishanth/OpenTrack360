@@ -1,0 +1,12 @@
+{
+  "id": "737fc4af-7735-46d6-98f4-0ee6db2cbb52",
+  "name": "Milo",
+  "species": "dog",
+  "photoUrl": null,
+  "circleIds": ["fcac8f75-31c3-4866-bfb6-733f43b0fd90"],
+  "recoveryEnabled": true,
+  "recoveryFields": ["petName", "species", "ownerMessage"],
+  "ownerMessage": "Milo is friendly and responds to his name.",
+  "contactRoute": null,
+  "createdAt": "2026-11-26T08:30:00Z"
+}

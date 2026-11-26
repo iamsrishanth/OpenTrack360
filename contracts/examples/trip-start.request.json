@@ -3,5 +3,6 @@
   "destinationLabel": "Office",
   "destinationLatitude": 19.1136,
   "destinationLongitude": 72.8697,
-  "shareLockScreenProgress": true
+  "shareLockScreenProgress": true,
+  "confirmedDrive": true
 }

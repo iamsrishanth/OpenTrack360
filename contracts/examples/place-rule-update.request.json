@@ -1,0 +1,6 @@
+{
+  "kind": "no_show",
+  "expectedAt": "2026-11-26T15:00:00Z",
+  "graceMinutes": 20,
+  "recurrence": null
+}

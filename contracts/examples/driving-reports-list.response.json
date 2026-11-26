@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "tripId": "cfa39b5a-c66e-4f7a-8fcf-355b5982c177",
+      "memberId": "d1a97680-faa9-4f37-8d8f-59841456c981",
+      "startedAt": "2026-11-26T08:00:00Z",
+      "endedAt": "2026-11-26T08:28:00Z",
+      "classification": "driver",
+      "confirmedDrive": true
+    }
+  ],
+  "nextCursor": null
+}

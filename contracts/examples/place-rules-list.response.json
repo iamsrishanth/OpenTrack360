@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "ed5ff193-ef8a-4709-9108-74df82c254a9",
+      "circleId": "fcac8f75-31c3-4866-bfb6-733f43b0fd90",
+      "placeId": "5774b531-65ac-4bbd-91ee-0eb77b4b064f",
+      "kind": "no_show",
+      "memberIds": [],
+      "expectedAt": "2026-11-26T15:00:00Z",
+      "graceMinutes": 15,
+      "recurrence": null,
+      "createdAt": "2026-11-26T10:05:00Z"
+    }
+  ],
+  "nextCursor": null
+}

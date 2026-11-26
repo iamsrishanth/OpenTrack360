@@ -1,12 +1,15 @@
 {
   "id": "aa5a8682-8275-4b3a-8b20-f0c51e0ff413",
-  "status": "submitted",
+  "status": "queued",
+  "latitude": 19.076,
+  "longitude": 72.8777,
+  "accuracyMeters": 12.5,
   "recipients": [
     {
       "recipientId": "d1a97680-faa9-4f37-8d8f-59841456c981",
-      "state": "submitted"
+      "state": "queued"
     }
   ],
   "createdAt": "2026-11-26T10:26:00Z",
-  "providerMessageId": "fcm-message-id-example"
+  "providerMessageId": null
 }
