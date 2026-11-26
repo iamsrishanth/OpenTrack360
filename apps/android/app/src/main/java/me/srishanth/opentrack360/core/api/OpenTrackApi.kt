@@ -151,11 +151,25 @@ class OpenTrackApi(
 
     suspend fun memberDelete(path: String): JSONObject = memberRequest("DELETE", path)
 
-    suspend fun publicGet(path: String, bearer: String? = null): ApiResponse =
-        request("GET", path, bearer = bearer, clearMemberSessionOnUnauthorized = false)
+    /** Public guest calls already carry a complete `Authorization` header from the validated link. */
+    suspend fun publicGet(path: String, authorizationHeader: String? = null): ApiResponse =
+        request(
+            method = "GET",
+            path = path,
+            bearer = null,
+            authorizationHeader = authorizationHeader,
+            clearMemberSessionOnUnauthorized = false,
+        )
 
-    suspend fun publicPost(path: String, body: JSONObject, bearer: String): ApiResponse =
-        request("POST", path, body, bearer, clearMemberSessionOnUnauthorized = false)
+    suspend fun publicPost(path: String, body: JSONObject, authorizationHeader: String): ApiResponse =
+        request(
+            method = "POST",
+            path = path,
+            body = body,
+            bearer = null,
+            authorizationHeader = authorizationHeader,
+            clearMemberSessionOnUnauthorized = false,
+        )
 
     /** Upload one private pet image to the short-lived HTTPS URL returned by the member API. */
     suspend fun putSignedUpload(uploadUrl: String, contentType: String, content: ByteArray) = withContext(Dispatchers.IO) {
@@ -211,6 +225,7 @@ class OpenTrackApi(
         path: String,
         body: JSONObject? = null,
         bearer: String?,
+        authorizationHeader: String? = null,
         queryParameters: Map<String, String> = emptyMap(),
         clearMemberSessionOnUnauthorized: Boolean = true,
     ): ApiResponse = withContext(Dispatchers.IO) {
@@ -229,7 +244,9 @@ class OpenTrackApi(
             useCaches = false
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "OpenTrack360-Android/${BuildConfig.VERSION_NAME}")
-            if (bearer != null) setRequestProperty("Authorization", "Bearer $bearer")
+            authorizationHeaderForRequest(bearer, authorizationHeader)?.let {
+                setRequestProperty("Authorization", it)
+            }
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -288,4 +305,15 @@ class OpenTrackApi(
         const val MAX_PET_PHOTO_BYTES = 5 * 1024 * 1024
         val PET_PHOTO_CONTENT_TYPES = setOf("image/jpeg", "image/png", "image/webp")
     }
+}
+
+/**
+ * Member API methods pass a raw access token; public guest methods pass their complete header.
+ * Keeping these paths distinct prevents turning `Bearer <secret>` into `Bearer Bearer <secret>`.
+ */
+internal fun authorizationHeaderForRequest(bearer: String?, authorizationHeader: String?): String? {
+    require(bearer == null || authorizationHeader == null) {
+        "Choose either a raw bearer token or a complete Authorization header."
+    }
+    return authorizationHeader ?: bearer?.let { "Bearer $it" }
 }

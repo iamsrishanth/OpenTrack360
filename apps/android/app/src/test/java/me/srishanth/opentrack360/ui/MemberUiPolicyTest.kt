@@ -5,6 +5,7 @@ import me.srishanth.opentrack360.ui.model.DestructiveActionKind
 import me.srishanth.opentrack360.ui.model.DestructiveActionPolicy
 import me.srishanth.opentrack360.ui.model.DestructiveConfirmationState
 import me.srishanth.opentrack360.ui.model.MemberAccessPolicy
+import me.srishanth.opentrack360.ui.model.circleSharingLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -13,6 +14,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemberUiPolicyTest {
+    @Test
+    fun circleMemberSharingLabelUsesBooleanMemberContract() {
+        assertEquals("sharing", circleSharingLabel(true))
+        assertEquals("paused", circleSharingLabel(false))
+        assertEquals("unknown", circleSharingLabel(null))
+    }
+
     @Test
     fun temporaryPasswordRotationBlocksMemberDataUntilFreshLogin() {
         var access = MemberAccessPolicy.afterLogin(

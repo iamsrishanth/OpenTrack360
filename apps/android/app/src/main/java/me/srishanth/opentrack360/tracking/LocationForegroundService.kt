@@ -128,6 +128,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private val mainHandler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var engine = TrackingEngine()
+    private val arrivalDetector = DestinationArrivalDetector()
     private val motionTracker = AccelerometerMotionTracker()
     private var runtime: TrackingRuntime? = null
     private var sync: TrackingSyncCoordinator? = null
@@ -136,6 +137,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var activeScope: TrackingScope? = null
+    private var arrivalScope: TrackingScope? = null
     private var pendingStopScope: TrackingScope? = null
     private var currentPermission: PermissionSnapshot? = null
     private var started = false
@@ -341,23 +343,54 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         )
         val result = engine.onLocation(scope, permission, installed.sharingConsentEnabled(), sample, motionTracker.current(), Instant.now())
         if (result !is LocationProcessResult.Accepted) return
-        val rejection = sync?.enqueueFix(scope, sample)
-        if (rejection != null) return
+        if (arrivalScope?.sameCaptureScope(scope) != true) {
+            arrivalDetector.reset()
+            arrivalScope = scope
+        }
         val driveUpdate = result.driveUpdate
         if (driveUpdate is DriveUpdate.Ended) {
             val observedAt = driveUpdate.trip.endedAt ?: sample.capturedAt
-            runCatching { installed.activeDriveEndShareIds() }.getOrDefault(emptyList()).forEach { shareId ->
+            runCatching { installed.activeDriveEndShareTargets(scope) }.getOrDefault(emptyList()).forEach { target ->
+                if (sync?.hasPendingTerminalEvent(scope, target.shareId, ShareEventType.DRIVE_END) == true) {
+                    installed.onDriveEndShareEventQueued(target.shareId)
+                    return@forEach
+                }
+                val evidence = DriveEndEvidencePolicy.forLinkedTrip(
+                    evidenceFixes = driveUpdate.evidenceFixes,
+                    shareStartedAt = target.shareStartedAt,
+                    tripStartedAt = target.tripStartedAt,
+                    tripSessionMatchesCurrent = target.tripSessionMatchesCurrent,
+                    currentSharingEpoch = scope.sharingEpoch,
+                    shareSharingEpoch = target.sharingEpoch,
+                )
+                if (evidence.isEmpty()) return@forEach
                 val event = runCatching {
                     PendingShareEvent(
                         eventType = ShareEventType.DRIVE_END,
                         observedAt = observedAt,
-                        evidenceFixes = driveUpdate.evidenceFixes,
+                        evidenceFixes = evidence,
                     )
                 }.getOrNull() ?: return@forEach
-                sync?.enqueueTerminalEvent(scope, shareId, event)
+                if (sync?.enqueueTerminalEvent(scope, target.shareId, event) == true) {
+                    installed.onDriveEndShareEventQueued(target.shareId)
+                }
+            }
+        }
+        runCatching { installed.activeArrivalShareTargets(scope) }.getOrDefault(emptyList()).forEach { target ->
+            if (sync?.hasPendingTerminalEvent(scope, target.shareId, ShareEventType.ARRIVAL) == true) {
+                installed.onArrivalShareEventQueued(scope, target.shareId)
+                return@forEach
+            }
+            val arrivalEvent = arrivalDetector.observe(target, sample, Instant.now()) ?: return@forEach
+            if (sync?.enqueueTerminalEvent(scope, target.shareId, arrivalEvent) == true) {
+                installed.onArrivalShareEventQueued(scope, target.shareId)
             }
         }
         driveUpdate?.let(installed.onDriveUpdate)
+        // Persist any terminal event detected by this fix before appending the fix itself. All
+        // subsequent fixes will then remain behind that event until the server resolves it.
+        val rejection = sync?.enqueueFix(scope, sample)
+        if (rejection != null) return
         val drivingNow = engine.isDriveActive
         if (drivingNow != lastRequestedDriveMode) {
             lastRequestedDriveMode = drivingNow
@@ -412,6 +445,8 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private fun stopLocationCollection() {
         started = false
         engine.stop()
+        arrivalDetector.reset()
+        arrivalScope = null
         removeLocationUpdates()
         stopMotionSensor()
         mainHandler.removeCallbacks(permissionWatch)

@@ -12,19 +12,22 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Encrypted bytes are stored in app-private SharedPreferences with synchronous durable writes. */
-class SharedPreferencesTrackingBlobStorage(context: Context) : TrackingBlobStorage {
+class SharedPreferencesTrackingBlobStorage(
+    context: Context,
+    private val keyName: String = KEY_QUEUE,
+) : TrackingBlobStorage {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    override fun read(): ByteArray? = preferences.getString(KEY_QUEUE, null)?.let {
+    override fun read(): ByteArray? = preferences.getString(keyName, null)?.let {
         runCatching { Base64.decode(it, Base64.NO_WRAP) }.getOrNull()
     }
 
     override fun write(value: ByteArray): Boolean = preferences.edit()
-        .putString(KEY_QUEUE, Base64.encodeToString(value, Base64.NO_WRAP))
+        .putString(keyName, Base64.encodeToString(value, Base64.NO_WRAP))
         .commit()
 
     override fun clear() {
-        preferences.edit().remove(KEY_QUEUE).commit()
+        preferences.edit().remove(keyName).commit()
     }
 
     private companion object {

@@ -139,6 +139,12 @@ data class CircleMemberUi(
     val directionsEtaLabel: String? = null,
 )
 
+fun circleSharingLabel(sharingEnabled: Boolean?): String = when (sharingEnabled) {
+    true -> "sharing"
+    false -> "paused"
+    null -> "unknown"
+}
+
 data class CircleChoiceUi(
     val id: String,
     val name: String,

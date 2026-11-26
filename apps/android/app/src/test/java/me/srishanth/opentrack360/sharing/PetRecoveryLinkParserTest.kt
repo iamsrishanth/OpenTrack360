@@ -1,20 +1,30 @@
 package me.srishanth.opentrack360.sharing
 
+import me.srishanth.opentrack360.core.api.authorizationHeaderForRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertNotNull
 import org.junit.Test
 import java.util.Base64
 
 class PetRecoveryLinkParserTest {
     @Test
     fun acceptsExactPetRecoveryOriginAndKeepsSecretInAuthorizationHeader() {
-        val request = PetRecoveryLinkParser.parse(validLink)
+        val request = requireNotNull(PetRecoveryLinkParser.parse(validLink))
 
-        assertNotNull(request)
-        assertEquals(petId, request!!.petId)
+        assertEquals(petId, request.petId)
         assertEquals("Bearer $secret", request.authorizationHeader())
+        assertEquals(
+            "Bearer $secret",
+            authorizationHeaderForRequest(bearer = null, authorizationHeader = request.authorizationHeader()),
+        )
+
+        // The production viewer builds its API path from the public pet ID only; the fragment
+        // credential is carried by the Authorization header and never appears in the URL.
+        val apiUrl = java.net.URI("https://track.srishanth.me/api/v1/public/pets/${request.petId}")
+        assertNull(apiUrl.rawQuery)
+        assertNull(apiUrl.rawFragment)
+        assertFalse(apiUrl.toString().contains(secret))
         assertFalse(request.toString().contains(secret))
     }
 

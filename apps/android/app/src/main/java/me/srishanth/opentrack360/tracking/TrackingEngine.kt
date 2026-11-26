@@ -117,7 +117,8 @@ private class DriveClassifier(private val endThreshold: Duration) {
         var stationaryLastAt: Instant? = null,
         var recordedStopStart: Instant? = null,
         val stops: MutableList<DriveStop> = mutableListOf(),
-        val evidence: ArrayDeque<LocationSample> = ArrayDeque(),
+        val movementEvidence: ArrayDeque<LocationSample> = ArrayDeque(),
+        val stationaryEvidence: ArrayDeque<LocationSample> = ArrayDeque(),
     )
 
     private var lastFix: LocationSample? = null
@@ -140,7 +141,11 @@ private class DriveClassifier(private val endThreshold: Duration) {
             lastFix = null
             movementCandidate = null
             // Poor quality must not advance a stationary timer or produce a terminal event.
-            active?.let { it.stationaryStartedAt = null; it.stationaryLastAt = null }
+            active?.let {
+                it.stationaryStartedAt = null
+                it.stationaryLastAt = null
+                it.stationaryEvidence.clear()
+            }
             return active?.let { DriveUpdate.Progress(snapshot(it, captured, ended = false)) }
         }
 
@@ -152,8 +157,8 @@ private class DriveClassifier(private val endThreshold: Duration) {
                 if (priorCandidate != null && withinMovementWindow(priorCandidate.sample, sample)) {
                     val startAt = priorCandidate.sample.instantOrNull() ?: captured
                     val created = ActiveTrip(UUID.randomUUID().toString(), startAt, priorCandidate.sample)
-                    created.evidence.add(priorCandidate.sample)
-                    created.evidence.add(sample)
+                    if (isCredibleMovingFix(priorCandidate.sample)) created.movementEvidence.add(priorCandidate.sample)
+                    if (isCredibleMovingFix(sample)) created.movementEvidence.add(sample)
                     addMetrics(created, priorCandidate.sample, sample)
                     priorCandidate.sample.speedMps?.let {
                         created.speedSum += it
@@ -181,10 +186,11 @@ private class DriveClassifier(private val endThreshold: Duration) {
             trip.stationaryStartedAt = null
             trip.stationaryLastAt = null
             trip.recordedStopStart = null
+            trip.stationaryEvidence.clear()
         }
 
         addMetrics(trip, prior, sample)
-        appendEvidence(trip, sample)
+        if (isCredibleMovingFix(sample, motion)) appendMovementEvidence(trip, sample)
         trip.lastCredibleFix = sample
         lastFix = sample
 
@@ -197,8 +203,11 @@ private class DriveClassifier(private val endThreshold: Duration) {
                 trip.stationaryStartedAt = captured
                 trip.stationaryLastAt = captured
                 trip.recordedStopStart = null
+                trip.stationaryEvidence.clear()
+                trip.stationaryEvidence.addLast(sample)
             } else {
                 trip.stationaryLastAt = captured
+                appendStationaryEvidence(trip, sample)
                 val duration = Duration.between(started, captured)
                 if (duration >= STOP_COUNT_THRESHOLD && trip.recordedStopStart == null) {
                     trip.recordedStopStart = started
@@ -212,13 +221,20 @@ private class DriveClassifier(private val endThreshold: Duration) {
                     lastCompletedTrip = summary
                     active = null
                     movementCandidate = null
-                    return DriveUpdate.Ended(summary, trip.evidence.toList().takeLast(PendingShareEvent.MAX_EVENT_EVIDENCE_FIXES))
+                    val terminalEvidence = selectTerminalEvidence(
+                        movementSamples = trip.movementEvidence.toList(),
+                        stationarySamples = trip.stationaryEvidence.toList(),
+                        stationaryStartedAt = started,
+                        endedAt = captured,
+                    )
+                    return DriveUpdate.Ended(summary, terminalEvidence)
                 }
             }
         } else {
             trip.stationaryStartedAt = null
             trip.stationaryLastAt = null
             trip.recordedStopStart = null
+            trip.stationaryEvidence.clear()
         }
         return DriveUpdate.Progress(snapshot(trip, captured, ended = false))
     }
@@ -268,9 +284,77 @@ private class DriveClassifier(private val endThreshold: Duration) {
         }
     }
 
-    private fun appendEvidence(trip: ActiveTrip, sample: LocationSample) {
-        trip.evidence.addLast(sample)
-        while (trip.evidence.size > EVIDENCE_HISTORY_LIMIT) trip.evidence.removeFirst()
+    private fun isCredibleMovingFix(sample: LocationSample, motion: MotionEvidence = MotionEvidence.MOVING): Boolean =
+        motion == MotionEvidence.MOVING && sample.accuracyMeters <= MAX_DRIVE_ACCURACY_METERS &&
+            (sample.speedMps ?: 0.0) >= MIN_DRIVE_SPEED_MPS
+
+    private fun appendMovementEvidence(trip: ActiveTrip, sample: LocationSample) {
+        trip.movementEvidence.addLast(sample)
+        while (trip.movementEvidence.size > MOVEMENT_EVIDENCE_HISTORY_LIMIT) trip.movementEvidence.removeFirst()
+    }
+
+    private fun appendStationaryEvidence(trip: ActiveTrip, sample: LocationSample) {
+        trip.stationaryEvidence.addLast(sample)
+        while (trip.stationaryEvidence.size > STATIONARY_EVIDENCE_HISTORY_LIMIT) {
+            trip.stationaryEvidence.removeFirst()
+        }
+    }
+
+    /**
+     * The API caps evidence at ten fixes, while local detection needs a continuous five minute
+     * stationary window. Downsample across the complete qualifying window instead of taking the
+     * most recent ten 15 second callbacks (which would cover only 135 seconds).
+     */
+    private fun selectTerminalEvidence(
+        movementSamples: List<LocationSample>,
+        stationarySamples: List<LocationSample>,
+        stationaryStartedAt: Instant,
+        endedAt: Instant,
+    ): List<LocationSample> {
+        val moving = movementSamples.mapNotNull { sample ->
+            sample.instantOrNull()?.let { it to sample }
+        }.filter { (captured, sample) ->
+            !captured.isAfter(stationaryStartedAt) &&
+                !captured.isBefore(stationaryStartedAt.minus(MOVEMENT_EVIDENCE_LOOKBACK)) &&
+                sample.accuracyMeters <= MAX_DRIVE_ACCURACY_METERS &&
+                (sample.speedMps ?: 0.0) in MIN_DRIVE_SPEED_MPS..MAX_PRE_STOP_SPEED_MPS
+        }.sortedBy { it.first }
+        var movementPair: List<LocationSample>? = null
+        for (lastIndex in moving.indices.reversed()) {
+            val (lastAt, lastSample) = moving[lastIndex]
+            if (Duration.between(lastAt, stationaryStartedAt) > MOVEMENT_EVIDENCE_LOOKBACK) continue
+            for (firstIndex in lastIndex - 1 downTo 0) {
+                val (firstAt, firstSample) = moving[firstIndex]
+                val intervalSeconds = Duration.between(firstAt, lastAt).seconds
+                if (intervalSeconds < MIN_MOVING_EVIDENCE_SPAN.seconds) continue
+                val distance = distanceMeters(firstSample, lastSample)
+                val maximumPlausibleDistance = MAX_PRE_STOP_SPEED_MPS * intervalSeconds + MAX_PRE_STOP_DISTANCE_SLACK_METERS
+                if (distance < MIN_MOVING_EVIDENCE_DISTANCE_METERS || distance > maximumPlausibleDistance) continue
+                movementPair = listOf(firstSample, lastSample)
+                break
+            }
+            if (movementPair != null) break
+        }
+        val selectedMovement = movementPair ?: return emptyList()
+
+        val window = stationarySamples.filter { sample ->
+            val captured = sample.instantOrNull() ?: return@filter false
+            !captured.isBefore(stationaryStartedAt) && !captured.isAfter(endedAt) &&
+                isCredibleStationary(sample, MotionEvidence.STATIONARY)
+        }
+        if (window.size < 2) return emptyList()
+        val first = window.first().instantOrNull() ?: return emptyList()
+        val last = window.last().instantOrNull() ?: return emptyList()
+        if (Duration.between(first, last) < endThreshold) return emptyList()
+        val stationaryLimit = PendingShareEvent.MAX_EVENT_EVIDENCE_FIXES - selectedMovement.size
+        if (window.size <= stationaryLimit) return selectedMovement + window
+        val lastIndex = window.lastIndex
+        val intervals = stationaryLimit - 1
+        val selectedStationary = (0 until stationaryLimit).map { step ->
+            val index = (step * lastIndex + intervals / 2) / intervals
+            window[index]
+        }.distinctBy { it.sampleId }
+        return selectedMovement + selectedStationary
     }
 
     private fun snapshot(trip: ActiveTrip, at: Instant, ended: Boolean): DriveTrip {
@@ -313,8 +397,120 @@ private class DriveClassifier(private val endThreshold: Duration) {
         val MAX_METRIC_GAP: Duration = Duration.ofSeconds(60)
         const val MAX_SINGLE_STEP_METERS = 120.0
         const val MAX_PLAUSIBLE_SPEED_MPS = 80.0
-        const val EVIDENCE_HISTORY_LIMIT = 20
+        const val MIN_MOVING_EVIDENCE_DISTANCE_METERS = 150.0
+        const val MAX_PRE_STOP_SPEED_MPS = 55.0
+        const val MAX_PRE_STOP_DISTANCE_SLACK_METERS = 100.0
+        const val MOVEMENT_EVIDENCE_HISTORY_LIMIT = 32
+        const val STATIONARY_EVIDENCE_HISTORY_LIMIT = 512
+        val MIN_MOVING_EVIDENCE_SPAN: Duration = Duration.ofSeconds(30)
+        val MOVEMENT_EVIDENCE_LOOKBACK: Duration = Duration.ofSeconds(90)
     }
+}
+
+/** Verifies that a bounded drive_end payload still satisfies the server's moving/stationary rules. */
+object DriveEndEvidencePolicy {
+    /**
+     * Allows only moving fixes from the linked confirmed trip to predate share creation. The
+     * server-provided session flag and the locally current epoch must both still match; all
+     * stationary evidence remains at or after share creation.
+     */
+    fun forLinkedTrip(
+        evidenceFixes: List<LocationSample>,
+        shareStartedAt: Instant,
+        tripStartedAt: Instant,
+        tripSessionMatchesCurrent: Boolean,
+        currentSharingEpoch: Long,
+        shareSharingEpoch: Long,
+    ): List<LocationSample> {
+        if (!tripSessionMatchesCurrent || shareSharingEpoch < 1 || currentSharingEpoch != shareSharingEpoch ||
+            tripStartedAt.isAfter(shareStartedAt)
+        ) return emptyList()
+
+        val eligible = evidenceFixes.filter { sample ->
+            val at = sample.instantOrNull() ?: return@filter false
+            !at.isBefore(tripStartedAt) &&
+                (!at.isBefore(shareStartedAt) || isCredibleMovementEvidence(sample))
+        }
+        return eligible.takeIf(::isSufficient).orEmpty()
+    }
+
+    fun afterShareStart(evidenceFixes: List<LocationSample>, shareStartedAt: Instant): List<LocationSample> {
+        val eligible = evidenceFixes.filter { sample ->
+            sample.instantOrNull()?.let { !it.isBefore(shareStartedAt) } == true
+        }
+        return eligible.takeIf(::isSufficient).orEmpty()
+    }
+
+    fun isSufficient(evidenceFixes: List<LocationSample>): Boolean {
+        if (evidenceFixes.size !in 4..PendingShareEvent.MAX_EVENT_EVIDENCE_FIXES) return false
+        val times = evidenceFixes.map { it.instantOrNull() ?: return false }
+        if (times.zipWithNext().any { (first, second) -> !second.isAfter(first) }) return false
+
+        val stationaryIndex = evidenceFixes.indexOfFirst(::isCredibleStationaryEvidence)
+        if (stationaryIndex < 2) return false
+        val stationary = evidenceFixes.drop(stationaryIndex)
+        if (stationary.size < 2 || stationary.any { !isCredibleStationaryEvidence(it) }) return false
+        val stationaryTimes = stationary.map { it.instantOrNull() ?: return false }
+        if (Duration.between(stationaryTimes.first(), stationaryTimes.last()) < STATIONARY_WINDOW) return false
+        if (stationaryTimes.zipWithNext().any { (first, second) ->
+                val gap = Duration.between(first, second)
+                gap.isNegative || gap.isZero || gap > MAX_STATIONARY_GAP
+            }
+        ) return false
+
+        val movement = evidenceFixes.take(stationaryIndex).mapIndexedNotNull { index, sample ->
+            val at = sample.instantOrNull() ?: return@mapIndexedNotNull null
+            if (isCredibleMovementEvidence(sample)) index to (at to sample) else null
+        }
+        if (movement.size < 2) return false
+        val firstStationaryAt = stationaryTimes.first()
+        val transitionSamples = movement.map { it.second }
+        val hasPair = transitionSamples.indices.any { firstIndex ->
+            (firstIndex + 1 until transitionSamples.size).any { secondIndex ->
+                val (firstAt, firstSample) = transitionSamples[firstIndex]
+                val (secondAt, secondSample) = transitionSamples[secondIndex]
+                val span = Duration.between(firstAt, secondAt).seconds
+                val transition = Duration.between(secondAt, firstStationaryAt)
+                val distance = distanceMeters(firstSample, secondSample)
+                span >= MIN_MOVING_SPAN.seconds &&
+                    !transition.isNegative && transition <= MAX_MOVING_TO_STATIONARY_GAP &&
+                    distance >= MIN_MOVING_DISTANCE_METERS &&
+                    distance <= MAX_MOVING_SPEED_MPS * span + DISTANCE_SLACK_METERS
+            }
+        }
+        return hasPair
+    }
+
+    private fun isCredibleMovementEvidence(sample: LocationSample): Boolean =
+        sample.accuracyMeters in 0.0..MAX_MOVING_ACCURACY_METERS &&
+            sample.speedMps?.let { it in MIN_MOVING_SPEED_MPS..MAX_MOVING_SPEED_MPS } == true
+
+    private fun isCredibleStationaryEvidence(sample: LocationSample): Boolean =
+        sample.accuracyMeters in 0.0..MAX_STATIONARY_ACCURACY_METERS &&
+            sample.speedMps?.let { it in 0.0..MAX_STATIONARY_SPEED_MPS } == true
+
+    private fun distanceMeters(a: LocationSample, b: LocationSample): Double {
+        val earthRadiusMeters = 6_371_000.0
+        val latA = Math.toRadians(a.latitude)
+        val latB = Math.toRadians(b.latitude)
+        val deltaLat = latB - latA
+        val deltaLon = Math.toRadians(b.longitude - a.longitude)
+        val value = sin(deltaLat / 2) * sin(deltaLat / 2) +
+            cos(latA) * cos(latB) * sin(deltaLon / 2) * sin(deltaLon / 2)
+        return earthRadiusMeters * 2 * atan2(sqrt(value), sqrt(1 - value))
+    }
+
+    private val STATIONARY_WINDOW: Duration = Duration.ofMinutes(5)
+    private val MAX_STATIONARY_GAP: Duration = Duration.ofSeconds(60)
+    private val MIN_MOVING_SPAN: Duration = Duration.ofSeconds(30)
+    private val MAX_MOVING_TO_STATIONARY_GAP: Duration = Duration.ofSeconds(90)
+    private val MIN_MOVING_SPEED_MPS = 5.0
+    private val MAX_MOVING_ACCURACY_METERS = 50.0
+    private val MAX_STATIONARY_ACCURACY_METERS = 25.0
+    private val MAX_STATIONARY_SPEED_MPS = 1.5
+    private val MIN_MOVING_DISTANCE_METERS = 150.0
+    private val MAX_MOVING_SPEED_MPS = 55.0
+    private val DISTANCE_SLACK_METERS = 100.0
 }
 
 /** Rolling linear-acceleration estimate using only the native accelerometer. */

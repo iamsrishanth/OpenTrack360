@@ -23,6 +23,13 @@ import me.srishanth.opentrack360.ui.model.PermissionDiagnosticUi
 
 data class SosRecipientUi(val id: String, val name: String, val accepted: Boolean, val channelLabel: String)
 
+object SosAcknowledgementPolicy {
+    fun canAcknowledge(currentMemberId: String?, recipientStates: Map<String, String>): Boolean {
+        val state = currentMemberId?.let(recipientStates::get) ?: return false
+        return state != "acknowledged" && state != "failed"
+    }
+}
+
 data class SosUiState(
     val recipients: List<SosRecipientUi> = emptyList(),
     val condition: DataCondition = DataCondition.UNKNOWN,
@@ -63,7 +70,13 @@ fun SosScreen(
             PrimaryAction("Invite an emergency contact", onInviteEmergencyContact, Modifier.fillMaxWidth())
         }
 
-        state.errorMessage?.let { StatusBanner(DataCondition.ERROR, "SOS not submitted", it) }
+        state.errorMessage?.let {
+            StatusBanner(
+                if (state.alertId == null) DataCondition.ERROR else DataCondition.OFFLINE,
+                if (state.alertId == null) "SOS not submitted" else "SOS status unavailable",
+                it,
+            )
+        }
         state.statusMessage?.let { StatusBanner(state.condition, "SOS status", it) }
         state.deliveryState?.let { delivery ->
             MemberCard {

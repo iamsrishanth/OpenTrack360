@@ -50,7 +50,15 @@ class CreatedShare(
     val createdAt: Instant,
     val expiresAt: Instant?,
     val endCondition: String,
+    val tripId: String?,
+    val tripStartedAt: Instant?,
+    val tripSessionMatchesCurrent: Boolean?,
+    val sharingEpoch: Long,
 ) {
+    init {
+        require(sharingEpoch >= 1)
+    }
+
     override fun toString(): String =
         "CreatedShare(id=$id, url=<redacted>, mode=${mode.wireValue}, status=${status.wireValue})"
 }
@@ -65,12 +73,39 @@ data class SenderShare(
     val expiresAt: Instant?,
     val endedAt: Instant?,
     val endCondition: String,
-)
+    val destination: ShareDestination? = null,
+    val tripId: String? = null,
+    val tripStartedAt: Instant? = null,
+    val tripSessionMatchesCurrent: Boolean? = null,
+    val sharingEpoch: Long = 1,
+) {
+    init {
+        require(sharingEpoch >= 1)
+    }
+
+    override fun toString(): String =
+        "SenderShare(id=$id, mode=${mode.wireValue}, status=${status.wireValue}, destination=${if (destination == null) "null" else "<redacted>"})"
+}
 
 data class ShareListPage(
     val data: List<SenderShare>,
     val nextCursor: String?,
 )
+
+/** Sender-only destination data needed to resume offline arrival checks after process death. */
+data class ShareDestination(
+    val latitude: Double,
+    val longitude: Double,
+    val radiusMeters: Int,
+) {
+    init {
+        require(latitude.isFinite() && latitude in -90.0..90.0)
+        require(longitude.isFinite() && longitude in -180.0..180.0)
+        require(radiusMeters in 50..1_000)
+    }
+
+    override fun toString(): String = "ShareDestination(<redacted>)"
+}
 
 data class RevokedShare(
     val revoked: Boolean,

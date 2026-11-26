@@ -32,6 +32,135 @@ class OfflineTrackingQueueTest {
     }
 
     @Test
+    fun offlineArrivalEventIsFlushedBeforeLaterMovementWhenConnectionReturns() = runBlocking {
+        val queue = queue()
+        val transport = TerminalShareTransport()
+        val coordinator = TrackingSyncCoordinator(queue, transport, now = { at(80) })
+        val target = ArrivalShareTarget(SHARE_ID, 19.076, 72.8777)
+        val detector = DestinationArrivalDetector()
+        val arrivalOne = sample(0)
+        val arrivalTwo = sample(60)
+        val terminalEvent = detector.observe(target, arrivalOne, at(0))
+        assertNull(terminalEvent)
+        val arrivalEvent = detector.observe(target, arrivalTwo, at(60))
+        assertEquals(ShareEventType.ARRIVAL, arrivalEvent?.eventType)
+        val laterMovement = LocationSample.create(at(70), 19.076, 72.8800, 8.0, 8.0)
+
+        assertNull(queue.enqueueSample(scope, arrivalOne, at(80)))
+        assertNull(queue.enqueueSample(scope, arrivalTwo, at(80)))
+        assertTrue(queue.enqueueShareEvent(scope, SHARE_ID, arrivalEvent!!, at(80)))
+        assertNull(queue.enqueueSample(scope, laterMovement, at(80)))
+
+        coordinator.flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        val eventIndex = transport.calls.indexOfFirst { it.startsWith("event:") }
+        val laterMovementIndex = transport.calls.indexOf("fix:${laterMovement.sampleId}")
+        assertTrue(eventIndex >= 0 && laterMovementIndex > eventIndex)
+        assertTrue(transport.oldShareVisibleFixIds.none { it == laterMovement.sampleId })
+    }
+
+    @Test
+    fun pendingTerminalEventStaysAtQueueHeadAcrossRestartUntilConfirmed() = runBlocking {
+        val storage = InMemoryTrackingBlobStorage()
+        val cipher = IdentityTrackingQueueCipher()
+        val event = event(1)
+        val laterFix = sample(2)
+        val transport = PendingThenConfirmedTransport()
+        val firstQueue = OfflineTrackingQueue(storage, cipher)
+        assertTrue(firstQueue.enqueueShareEvent(scope, SHARE_ID, event, at(40)))
+        assertNull(firstQueue.enqueueSample(scope, laterFix, at(40)))
+
+        val pendingResult = TrackingSyncCoordinator(firstQueue, transport, now = { at(40) })
+            .flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        assertEquals(FlushStopReason.EVENT_PENDING, pendingResult.stopReason)
+        assertEquals(1, firstQueue.pendingEventCount())
+        assertEquals(1, firstQueue.pendingSampleCount())
+        assertEquals(listOf("event:${event.clientEventId}"), transport.calls)
+
+        // Recreate both the queue and coordinator to prove the event id and barrier are durable.
+        val restoredQueue = OfflineTrackingQueue(storage, cipher)
+        val confirmedResult = TrackingSyncCoordinator(restoredQueue, transport, now = { at(40) })
+            .flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        assertEquals(1, confirmedResult.eventsSent)
+        assertEquals(1, confirmedResult.fixesSent)
+        assertEquals(
+            listOf("event:${event.clientEventId}", "event:${event.clientEventId}", "fix:${laterFix.sampleId}"),
+            transport.calls,
+        )
+        assertEquals(0, restoredQueue.pendingEventCount())
+        assertEquals(0, restoredQueue.pendingSampleCount())
+    }
+
+    @Test
+    fun terminalServerStateResolvesPendingEventBeforeLaterFixes() = runBlocking {
+        val queue = queue()
+        val event = event(1)
+        val laterFix = sample(2)
+        val calls = mutableListOf<String>()
+        queue.enqueueShareEvent(scope, SHARE_ID, event, at(40))
+        queue.enqueueSample(scope, laterFix, at(40))
+        val transport = object : TrackingTransport {
+            override suspend fun postLocationsBatch(sharingEpoch: Long, samples: List<LocationSample>): LocationBatchResult {
+                calls += samples.joinToString(prefix = "fix:", separator = ",") { it.sampleId }
+                return LocationBatchResult(SERVER_TIME, samples.map { it.sampleId }.toSet(), emptySet(), emptyMap())
+            }
+
+            override suspend fun postShareEvent(shareId: String, event: PendingShareEvent): ShareEventResult {
+                calls += "event:${event.clientEventId}"
+                return ShareEventResult(
+                    clientEventId = event.clientEventId,
+                    status = ShareEventStatus.PENDING,
+                    serverTime = SERVER_TIME,
+                    endedAt = SERVER_TIME,
+                    reason = "event_already_ended",
+                )
+            }
+
+            override suspend fun postStopSharing(clientRequestId: String): StopSharingResult =
+                StopSharingResult(true, 1, 2)
+        }
+
+        val result = TrackingSyncCoordinator(queue, transport, now = { at(40) })
+            .flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        assertEquals(1, result.eventsSent)
+        assertEquals(1, result.fixesSent)
+        assertEquals(listOf("event:${event.clientEventId}", "fix:${laterFix.sampleId}"), calls)
+    }
+
+    @Test
+    fun endedShareResponseResolvesBarrierAndReleasesLaterFixes() = runBlocking {
+        val queue = queue()
+        val event = event(1)
+        val laterFix = sample(2)
+        val calls = mutableListOf<String>()
+        queue.enqueueShareEvent(scope, SHARE_ID, event, at(40))
+        queue.enqueueSample(scope, laterFix, at(40))
+        val transport = object : RecordingTransport() {
+            override suspend fun postShareEvent(shareId: String, event: PendingShareEvent): ShareEventResult {
+                calls += "event:${event.clientEventId}"
+                throw ShareAlreadyEndedException()
+            }
+
+            override suspend fun postLocationsBatch(sharingEpoch: Long, samples: List<LocationSample>): LocationBatchResult {
+                calls += samples.joinToString(prefix = "fix:", separator = ",") { it.sampleId }
+                return super.postLocationsBatch(sharingEpoch, samples)
+            }
+        }
+
+        val result = TrackingSyncCoordinator(queue, transport, now = { at(40) })
+            .flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        assertEquals(1, result.eventsSent)
+        assertEquals(1, result.fixesSent)
+        assertEquals(listOf("event:${event.clientEventId}", "fix:${laterFix.sampleId}"), calls)
+        assertEquals(0, queue.pendingEventCount())
+        assertEquals(0, queue.pendingSampleCount())
+    }
+
+    @Test
     fun globalStopClearsPrivateQueueAndBlocksNewFixesUntilAcknowledged() = runBlocking {
         val queue = queue()
         val transport = RecordingTransport()
@@ -135,6 +264,51 @@ class OfflineTrackingQueueTest {
             calls += "stop:$clientRequestId"
             return StopSharingResult(true, 1, 2)
         }
+    }
+
+    private class TerminalShareTransport : RecordingTransport() {
+        private var shareEndedAt: Instant? = null
+        val oldShareVisibleFixIds = mutableListOf<String>()
+
+        override suspend fun postLocationsBatch(sharingEpoch: Long, samples: List<LocationSample>): LocationBatchResult {
+            val endedAt = shareEndedAt
+            oldShareVisibleFixIds += samples.filter { sample ->
+                val captured = sample.instantOrNull()
+                endedAt == null || captured == null || !captured.isAfter(endedAt)
+            }.map { it.sampleId }
+            return super.postLocationsBatch(sharingEpoch, samples)
+        }
+
+        override suspend fun postShareEvent(shareId: String, event: PendingShareEvent): ShareEventResult {
+            val result = super.postShareEvent(shareId, event)
+            if (shareId == SHARE_ID && event.eventType == ShareEventType.ARRIVAL) {
+                shareEndedAt = Instant.parse(event.observedAt)
+            }
+            return result
+        }
+    }
+
+    private class PendingThenConfirmedTransport : TrackingTransport {
+        val calls = mutableListOf<String>()
+        private var eventAttempts = 0
+
+        override suspend fun postLocationsBatch(sharingEpoch: Long, samples: List<LocationSample>): LocationBatchResult {
+            calls += samples.joinToString(prefix = "fix:", separator = ",") { it.sampleId }
+            return LocationBatchResult(SERVER_TIME, samples.map { it.sampleId }.toSet(), emptySet(), emptyMap())
+        }
+
+        override suspend fun postShareEvent(shareId: String, event: PendingShareEvent): ShareEventResult {
+            calls += "event:${event.clientEventId}"
+            eventAttempts++
+            return ShareEventResult(
+                clientEventId = event.clientEventId,
+                status = if (eventAttempts == 1) ShareEventStatus.PENDING else ShareEventStatus.CONFIRMED,
+                serverTime = SERVER_TIME,
+            )
+        }
+
+        override suspend fun postStopSharing(clientRequestId: String): StopSharingResult =
+            StopSharingResult(true, 1, 2)
     }
 
     private class TestCipher : TrackingQueueCipher {

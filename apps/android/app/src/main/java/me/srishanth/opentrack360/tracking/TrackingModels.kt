@@ -69,6 +69,21 @@ data class LocationSample(
     }
 }
 
+/** Sender-only metadata used to scope a drive-end event to its original trip and account epoch. */
+data class DriveEndShareTarget(
+    val shareId: String,
+    val tripId: String,
+    val shareStartedAt: Instant,
+    val tripStartedAt: Instant,
+    val tripSessionMatchesCurrent: Boolean,
+    val sharingEpoch: Long,
+) {
+    init {
+        require(shareId.isNotBlank() && tripId.isNotBlank())
+        require(sharingEpoch >= 1)
+    }
+}
+
 enum class SampleRejection {
     INVALID_TIMESTAMP,
     FUTURE_TIMESTAMP,
@@ -109,10 +124,15 @@ data class LocationBatchResult(
 
 enum class ShareEventStatus { CONFIRMED, PENDING, DUPLICATE }
 
+/** The API returned the contract's 410 terminal response for an ended or revoked share. */
+class ShareAlreadyEndedException : Exception("The share has already ended")
+
 data class ShareEventResult(
     val clientEventId: String,
     val status: ShareEventStatus,
     val serverTime: String,
+    val endedAt: String? = null,
+    val reason: String? = null,
 )
 
 data class StopSharingResult(
@@ -143,12 +163,15 @@ data class TrackingRuntime(
     val scopeProvider: () -> TrackingScope?,
     val sharingConsentEnabled: () -> Boolean,
     val sharingEnabled: () -> Boolean,
-    val activeDriveEndShareIds: () -> List<String> = { emptyList() },
+    val activeDriveEndShareTargets: (TrackingScope) -> List<DriveEndShareTarget> = { emptyList() },
+    val onDriveEndShareEventQueued: (String) -> Unit = {},
     val onSharingEpoch: (String, Long) -> Unit = { _, _ -> },
     val onTrackingStatus: (TrackingStatus) -> Unit = {},
     val onDriveUpdate: (DriveUpdate) -> Unit = {},
     val tripProgressNotification: () -> TripProgressNotificationContent? = { null },
     val onGlobalStop: () -> Unit = {},
+    val activeArrivalShareTargets: (TrackingScope) -> List<ArrivalShareTarget> = { emptyList() },
+    val onArrivalShareEventQueued: (TrackingScope, String) -> Unit = { _, _ -> },
 )
 
 enum class TrackingStatus {

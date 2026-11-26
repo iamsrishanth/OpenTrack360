@@ -31,7 +31,27 @@ import me.srishanth.opentrack360.ui.model.PetUi
 import java.time.Instant
 import java.time.LocalTime
 
-data class PetActivityUi(val label: String, val timeLabel: String, val memberLabel: String?)
+data class PetActivityUi(
+    val routineId: String,
+    val completedByMemberId: String,
+    val completedAtIso: String,
+    val routineTitle: String,
+    val completedAtLabel: String,
+    val memberLabel: String?,
+)
+
+fun latestPetRoutineCompletionLabels(activity: List<PetActivityUi>): Map<String, String> {
+    val latestByRoutine = mutableMapOf<String, Pair<Instant, String>>()
+    activity.forEach { completion ->
+        if (completion.routineId.isBlank() || completion.completedAtLabel.isBlank()) return@forEach
+        val completedAt = runCatching { Instant.parse(completion.completedAtIso) }.getOrNull() ?: return@forEach
+        val previous = latestByRoutine[completion.routineId]
+        if (previous == null || completedAt.isAfter(previous.first)) {
+            latestByRoutine[completion.routineId] = completedAt to completion.completedAtLabel
+        }
+    }
+    return latestByRoutine.mapValues { (_, completion) -> completion.second }
+}
 
 @Composable
 fun PetProfilesScreen(
@@ -281,8 +301,8 @@ fun PetDetailScreen(
         if (state.activity.isEmpty()) EmptyStateCard("No activity yet", "Routine completion history will appear when available.")
         state.activity.forEach { item ->
             MemberCard {
-                Text(item.label)
-                LabeledValue("Time", item.timeLabel)
+                Text("${item.routineTitle} completed")
+                LabeledValue("Completed", item.completedAtLabel)
                 item.memberLabel?.let { LabeledValue("Member", it) }
             }
         }

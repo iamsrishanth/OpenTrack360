@@ -19,6 +19,7 @@ import me.srishanth.opentrack360.sharing.ShareEventResult
 import me.srishanth.opentrack360.sharing.ShareEventStatus
 import me.srishanth.opentrack360.sharing.ShareGateway
 import me.srishanth.opentrack360.sharing.ShareListPage
+import me.srishanth.opentrack360.sharing.ShareDestination
 import me.srishanth.opentrack360.sharing.ShareMode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -30,6 +31,8 @@ import java.util.UUID
 class ApiShareGateway(
     private val api: OpenTrackApi,
     private val onSharesChanged: (List<SenderShare>) -> Unit = {},
+    private val onShareCreated: (CreatedShare, CreateShareRequest) -> Unit = { _, _ -> },
+    private val onShareRevoked: (String) -> Unit = {},
 ) : ShareGateway, GuestShareGateway {
     override suspend fun create(request: CreateShareRequest): CreatedShare {
         val body = when (request) {
@@ -59,11 +62,16 @@ class ApiShareGateway(
             createdAt = json.getString("createdAt").toInstant(),
             expiresAt = json.optNullableString("expiresAt")?.toInstant(),
             endCondition = json.optString("endCondition"),
+            tripId = json.optNullableString("tripId")?.uuidPathSegment(),
+            tripStartedAt = json.optNullableString("tripStartedAt")?.toInstant(),
+            tripSessionMatchesCurrent = json.optNullableBoolean("tripSessionMatchesCurrent"),
+            sharingEpoch = json.getLong("sharingEpoch"),
         )
         require(created.status == SenderShareStatus.ACTIVE)
         require(GuestShareLinkParser.parse(created.url) is GuestLinkParseResult.Valid) {
             "The API returned an invalid guest link"
         }
+        onShareCreated(created, request)
         return created
     }
 
@@ -79,6 +87,17 @@ class ApiShareGateway(
                 expiresAt = item.optNullableString("expiresAt")?.toInstant(),
                 endedAt = item.optNullableString("endedAt")?.toInstant(),
                 endCondition = item.optString("endCondition"),
+                destination = item.optJSONObject("destination")?.let { destination ->
+                    ShareDestination(
+                        latitude = destination.getDouble("latitude"),
+                        longitude = destination.getDouble("longitude"),
+                        radiusMeters = destination.getInt("radiusMeters"),
+                    )
+                },
+                tripId = item.optNullableString("tripId")?.uuidPathSegment(),
+                tripStartedAt = item.optNullableString("tripStartedAt")?.toInstant(),
+                tripSessionMatchesCurrent = item.optNullableBoolean("tripSessionMatchesCurrent"),
+                sharingEpoch = item.getLong("sharingEpoch"),
             )
         }
         onSharesChanged(entries)
@@ -87,10 +106,12 @@ class ApiShareGateway(
 
     override suspend fun revoke(shareId: String): RevokedShare {
         val json = api.memberDelete("shares/${shareId.uuidPathSegment()}")
-        return RevokedShare(
+        val revoked = RevokedShare(
             revoked = json.optBoolean("revoked", true),
             endedAt = json.getString("endedAt").toInstant(),
         )
+        onShareRevoked(shareId)
+        return revoked
     }
 
     override suspend fun submitEvent(shareId: String, request: ShareEventRequest): ShareEventResult {
@@ -117,9 +138,9 @@ class ApiShareGateway(
         }
         val pathId = uri.path.substringAfterLast('/').takeIf { it.isNotBlank() }
             ?: return GuestShareReadOutcome.NotFound
-        val bearer = request.header("Authorization") ?: return GuestShareReadOutcome.NotFound
+        val authorizationHeader = request.header("Authorization") ?: return GuestShareReadOutcome.NotFound
         val response = try {
-            api.publicGet("public/shares/${pathId.uuidPathSegment()}", bearer)
+            api.publicGet("public/shares/${pathId.uuidPathSegment()}", authorizationHeader)
         } catch (_: Exception) {
             return GuestShareReadOutcome.TransientFailure
         }
@@ -169,6 +190,9 @@ class ApiShareGateway(
 
     private fun JSONObject.optNullableDouble(name: String): Double? =
         if (!has(name) || isNull(name)) null else optDouble(name).takeIf(Double::isFinite)
+
+    private fun JSONObject.optNullableBoolean(name: String): Boolean? =
+        if (!has(name) || isNull(name)) null else getBoolean(name)
 
     private fun String.toInstant(): Instant = Instant.parse(this)
 

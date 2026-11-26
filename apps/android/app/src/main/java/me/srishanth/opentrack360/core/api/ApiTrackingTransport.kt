@@ -48,14 +48,21 @@ class ApiTrackingTransport(private val api: OpenTrackApi) : TrackingTransport {
     }
 
     override suspend fun postShareEvent(shareId: String, event: PendingShareEvent): TrackingEventResult {
-        val response = api.memberPost(
-            "shares/${validatedUuid(shareId)}/events",
-            JSONObject()
-                .put("clientEventId", event.clientEventId)
-                .put("eventType", event.eventType.wireValue)
-                .put("observedAt", event.observedAt)
-                .put("evidenceFixes", JSONArray().apply { event.evidenceFixes.forEach { put(it.toJson()) } }),
-        )
+        val response = try {
+            api.memberPost(
+                "shares/${validatedUuid(shareId)}/events",
+                JSONObject()
+                    .put("clientEventId", event.clientEventId)
+                    .put("eventType", event.eventType.wireValue)
+                    .put("observedAt", event.observedAt)
+                    .put("evidenceFixes", JSONArray().apply { event.evidenceFixes.forEach { put(it.toJson()) } }),
+            )
+        } catch (exception: ApiException) {
+            if (exception.statusCode == 410 && exception.errorCode in setOf("SHARE_ENDED", "share_ended")) {
+                throw me.srishanth.opentrack360.tracking.ShareAlreadyEndedException()
+            }
+            throw exception
+        }
         return TrackingEventResult(
             clientEventId = response.getString("clientEventId"),
             status = when (response.getString("status")) {
@@ -64,6 +71,8 @@ class ApiTrackingTransport(private val api: OpenTrackApi) : TrackingTransport {
                 else -> ShareEventStatus.PENDING
             },
             serverTime = response.getString("serverTime"),
+            endedAt = response.optNullableString("endedAt"),
+            reason = response.optNullableString("reason"),
         )
     }
 
@@ -83,6 +92,9 @@ class ApiTrackingTransport(private val api: OpenTrackApi) : TrackingTransport {
     private fun JSONArray.strings(): List<String> = buildList {
         for (index in 0 until length()) add(getString(index))
     }
+
+    private fun JSONObject.optNullableString(name: String): String? =
+        if (!has(name) || isNull(name)) null else optString(name).takeIf(String::isNotBlank)
 
     private fun validatedUuid(value: String): String = java.util.UUID.fromString(value).toString()
 }

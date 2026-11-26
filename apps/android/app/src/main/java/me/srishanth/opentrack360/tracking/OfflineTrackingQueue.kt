@@ -67,7 +67,15 @@ object LocationSampleValidator {
     }
 }
 
-enum class FlushStopReason { EMPTY, NO_AUTHORITY, TRANSPORT_ERROR, SHARING_EPOCH_MISMATCH, SERVER_OMITTED_RESULT, COMPLETE }
+enum class FlushStopReason {
+    EMPTY,
+    NO_AUTHORITY,
+    TRANSPORT_ERROR,
+    SHARING_EPOCH_MISMATCH,
+    SERVER_OMITTED_RESULT,
+    EVENT_PENDING,
+    COMPLETE,
+}
 
 data class FlushSummary(
     val fixesSent: Int = 0,
@@ -128,12 +136,20 @@ class OfflineTrackingQueue(
     fun enqueueShareEvent(scope: TrackingScope, shareId: String, event: PendingShareEvent, now: Instant): Boolean = synchronized(lock) {
         if (records.any { it is QueueRecord.Stop && it.userId == scope.userId }) return false
         if (runCatching { UUID.fromString(shareId) }.isFailure) return false
+        if (records.any {
+                it is QueueRecord.Event && it.userId == scope.userId && it.shareId == shareId &&
+                    it.event.eventType == event.eventType
+            }
+        ) return false
         val observed = runCatching { Instant.parse(event.observedAt) }.getOrNull() ?: return false
         if (observed.isAfter(now.plus(validationPolicy.futureClockSkew))) return false
         if (records.count { it is QueueRecord.Event } >= maxEvents) return false
         var previous: Instant? = null
+        val eventEvidencePolicy = if (event.eventType == ShareEventType.DRIVE_END) {
+            validationPolicy.copy(maxAge = MAX_DRIVE_END_EVIDENCE_AGE)
+        } else validationPolicy
         for (sample in event.evidenceFixes) {
-            val rejection = LocationSampleValidator.validate(sample, now, validationPolicy, previous)
+            val rejection = LocationSampleValidator.validate(sample, now, eventEvidencePolicy, previous)
             if (rejection != null) return false
             previous = sample.instantOrNull()
         }
@@ -195,6 +211,12 @@ class OfflineTrackingQueue(
     fun pendingEventCount(): Int = synchronized(lock) { records.count { it is QueueRecord.Event } }
     fun pendingStopIds(): List<String> = synchronized(lock) { records.filterIsInstance<QueueRecord.Stop>().map { it.clientRequestId } }
     fun hasPendingStop(userId: String): Boolean = synchronized(lock) { records.any { it is QueueRecord.Stop && it.userId == userId } }
+
+    internal fun hasPendingEvent(userId: String, shareId: String, eventType: ShareEventType): Boolean = synchronized(lock) {
+        records.any {
+            it is QueueRecord.Event && it.userId == userId && it.shareId == shareId && it.event.eventType == eventType
+        }
+    }
 
     internal fun recordStopAcknowledged(userId: String, clientRequestId: String, updatedEpoch: Long): Boolean = synchronized(lock) {
         val removed = records.removeAll { it is QueueRecord.Stop && it.userId == userId && it.clientRequestId == clientRequestId }
@@ -366,6 +388,9 @@ class OfflineTrackingQueue(
         const val DEFAULT_MAX_SAMPLES = 500
         const val DEFAULT_MAX_EVENTS = 50
         const val DEFAULT_MAX_CIPHERTEXT_BYTES = 1_000_000
+        // A prior moving pair can end up to 90 seconds before a five-minute stationary window,
+        // with the earlier member of that pair up to another 90 seconds before it.
+        val MAX_DRIVE_END_EVIDENCE_AGE: Duration = Duration.ofMinutes(8)
         private const val MAX_PENDING_STOP_COMMANDS = 20
         private const val FORMAT_VERSION = 1
         private const val MAX_DECODE_RECORDS = 600
@@ -388,6 +413,9 @@ class TrackingSyncCoordinator(
 
     fun enqueueTerminalEvent(scope: TrackingScope, shareId: String, event: PendingShareEvent): Boolean =
         queue.enqueueShareEvent(scope, shareId, event, now())
+
+    fun hasPendingTerminalEvent(scope: TrackingScope, shareId: String, eventType: ShareEventType): Boolean =
+        queue.hasPendingEvent(scope.userId, shareId, eventType)
 
     fun stopAllLocally(scope: TrackingScope, clientRequestId: String = UUID.randomUUID().toString()): Boolean =
         queue.requestGlobalStop(scope, clientRequestId)
@@ -453,7 +481,17 @@ class TrackingSyncCoordinator(
                         return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.NO_AUTHORITY)
                     }
                     try {
-                        transport.postShareEvent(first.shareId, first.event)
+                        val result = transport.postShareEvent(first.shareId, first.event)
+                        if (result.clientEventId != first.event.clientEventId) {
+                            return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.SERVER_OMITTED_RESULT)
+                        }
+                        val serverShowsTerminal = result.endedAt != null || result.reason == "event_already_ended"
+                        if (result.status == ShareEventStatus.PENDING && !serverShowsTerminal) {
+                            return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.EVENT_PENDING)
+                        }
+                        queue.removeEvent(scope.userId, first.event.clientEventId)
+                        sentEvents++
+                    } catch (_: ShareAlreadyEndedException) {
                         queue.removeEvent(scope.userId, first.event.clientEventId)
                         sentEvents++
                     } catch (_: Exception) {

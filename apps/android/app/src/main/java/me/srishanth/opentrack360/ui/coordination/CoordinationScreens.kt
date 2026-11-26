@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import java.util.UUID
 import androidx.compose.ui.unit.dp
 import me.srishanth.opentrack360.ui.components.DestructiveActionButton
 import me.srishanth.opentrack360.ui.components.ConsentActionButton
@@ -331,7 +332,7 @@ fun HistoryScreen(
         if (state.playbackRunning) PrimaryAction("Stop route playback", onStopPlayback, Modifier.fillMaxWidth())
         else PrimaryAction("Play route", onPlayRoute, Modifier.fillMaxWidth(), state.routePointCount != null && state.routePointCount > 0)
         SectionHeading("Stops")
-        if (state.stops.isEmpty()) EmptyStateCard("No stops to show", "Stops are shown only when supported by the loaded history data.")
+        if (state.stops.isEmpty()) EmptyStateCard("No confirmed stops in this range", "A stop is listed only when precise, accurate fixes show continuous stationary time. Missing, approximate, or unreliable data cannot confirm a stop.")
         state.stops.forEach { stop ->
             MemberCard {
                 Text(stop.label, style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
@@ -482,6 +483,8 @@ fun EventsScreen(
     }
 }
 
+data class InboxSosTarget(val circleId: String, val sosId: String)
+
 data class InboxItemUi(
     val id: String,
     val kind: String,
@@ -490,7 +493,18 @@ data class InboxItemUi(
     val createdAtLabel: String,
     val deliveryState: String,
     val acknowledged: Boolean,
-)
+    val circleId: String? = null,
+    val sosId: String? = null,
+) {
+    fun sosTargetOrNull(): InboxSosTarget? {
+        val circle = circleId?.toCanonicalUuidOrNull() ?: return null
+        val sos = sosId?.toCanonicalUuidOrNull() ?: return null
+        return InboxSosTarget(circle, sos)
+    }
+
+    private fun String.toCanonicalUuidOrNull(): String? =
+        runCatching { UUID.fromString(this).toString() }.getOrNull()
+}
 
 @Composable
 fun NotificationInboxScreen(
@@ -498,6 +512,7 @@ fun NotificationInboxScreen(
     condition: DataCondition,
     message: String,
     onAcknowledge: (notificationIds: List<String>) -> Unit,
+    onOpenSos: (circleId: String, sosId: String) -> Unit,
 ) {
     MemberScreen(title = "Inbox", subtitle = "Delivery status reflects the configured app channel.") {
         StatusBanner(condition, "Notifications", message)
@@ -512,6 +527,9 @@ fun NotificationInboxScreen(
                 LabeledValue("Delivery", item.deliveryState)
                 LabeledValue("Received", item.createdAtLabel)
                 if (!item.acknowledged) Text("Unread", color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
+                item.sosTargetOrNull()?.let { target ->
+                    PrimaryAction("Open SOS status", { onOpenSos(target.circleId, target.sosId) }, Modifier.fillMaxWidth())
+                }
             }
         }
     }
@@ -699,12 +717,12 @@ fun ActivitySharingScreen(
 
 data class DrivingReportUi(
     val tripId: String,
+    val memberId: String,
+    val memberLabel: String?,
     val startedAtLabel: String,
     val endedAtLabel: String?,
     val classification: String,
-    val distanceMeters: Double?,
-    val durationMinutes: Int?,
-    val harshEventCount: Int?,
+    val confirmedDrive: Boolean,
 )
 
 @Composable
@@ -720,12 +738,11 @@ fun DrivingReportsScreen(
         reports.forEach { trip ->
             MemberCard {
                 SectionHeading("Trip · ${trip.startedAtLabel}")
+                LabeledValue("Member", trip.memberLabel ?: "Circle member")
                 trip.endedAtLabel?.let { LabeledValue("Ended", it) }
                 LabeledValue("Classification", trip.classification)
-                trip.distanceMeters?.let { LabeledValue("Distance", "${(it / 1000.0).toString().take(4)} km") }
-                trip.durationMinutes?.let { LabeledValue("Duration", "$it min") }
-                trip.harshEventCount?.let { LabeledValue("Measured events", it.toString()) }
-                Text("Metrics may be incomplete when phone data is unavailable. They are not a safety score.")
+                LabeledValue("Driver confirmation", if (trip.confirmedDrive) "Confirmed by member" else "No confirmation recorded")
+                Text("Distance, duration, and driving-event metrics are not available in the current report data.")
                 FilterChip(trip.classification.equals("driver", true), { onCorrectClassification(trip.tripId, "driver") }, label = { Text("I was driving") })
                 FilterChip(trip.classification.equals("passenger", true), { onCorrectClassification(trip.tripId, "passenger") }, label = { Text("I was a passenger") })
             }

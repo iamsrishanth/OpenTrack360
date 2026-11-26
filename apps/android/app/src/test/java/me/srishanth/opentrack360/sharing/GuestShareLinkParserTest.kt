@@ -1,5 +1,6 @@
 package me.srishanth.opentrack360.sharing
 
+import me.srishanth.opentrack360.core.api.authorizationHeaderForRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -24,6 +25,10 @@ class GuestShareLinkParserTest {
         assertNull(httpRequest.url.rawFragment)
         assertFalse(httpRequest.url.toString().contains(secret))
         assertEquals("Bearer $secret", httpRequest.header("Authorization"))
+        assertEquals(
+            "Bearer $secret",
+            authorizationHeaderForRequest(bearer = null, authorizationHeader = httpRequest.header("Authorization")),
+        )
         assertFalse(httpRequest.toString().contains(secret))
     }
 

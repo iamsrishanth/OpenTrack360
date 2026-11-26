@@ -86,8 +86,10 @@ import me.srishanth.opentrack360.ui.coordination.DrivingReportUi
 import me.srishanth.opentrack360.ui.coordination.DrivingReportsScreen
 import me.srishanth.opentrack360.ui.coordination.EventsScreen
 import me.srishanth.opentrack360.ui.coordination.HistoryScreen
+import me.srishanth.opentrack360.ui.coordination.HistoryStopSample
 import me.srishanth.opentrack360.ui.coordination.HistoryStopUi
 import me.srishanth.opentrack360.ui.coordination.HistoryUiState
+import me.srishanth.opentrack360.ui.coordination.deriveHistoryStops
 import me.srishanth.opentrack360.ui.coordination.InboxItemUi
 import me.srishanth.opentrack360.ui.coordination.MorningCheckInScreen
 import me.srishanth.opentrack360.ui.coordination.MorningCheckInUi
@@ -114,6 +116,7 @@ import me.srishanth.opentrack360.ui.map.GeoPoint
 import me.srishanth.opentrack360.ui.map.MapMarker
 import me.srishanth.opentrack360.ui.map.OpenTrackMapSurface
 import me.srishanth.opentrack360.ui.model.CircleMemberUi
+import me.srishanth.opentrack360.ui.model.circleSharingLabel
 import me.srishanth.opentrack360.ui.model.CircleChoiceUi
 import me.srishanth.opentrack360.ui.model.DataCondition
 import me.srishanth.opentrack360.ui.model.MemberAccessState
@@ -127,6 +130,7 @@ import me.srishanth.opentrack360.ui.model.PlaceArrivalUi
 import me.srishanth.opentrack360.ui.model.PlaceUi
 import me.srishanth.opentrack360.ui.pets.LostPetReportScreen
 import me.srishanth.opentrack360.ui.pets.PetActivityUi
+import me.srishanth.opentrack360.ui.pets.latestPetRoutineCompletionLabels
 import me.srishanth.opentrack360.ui.pets.PetDetailScreen
 import me.srishanth.opentrack360.ui.pets.PetDetailUiState
 import me.srishanth.opentrack360.ui.pets.PetProfilesScreen
@@ -137,6 +141,7 @@ import me.srishanth.opentrack360.ui.safety.AccountPrivacyUiState
 import me.srishanth.opentrack360.ui.safety.PermissionDiagnosticsScreen
 import me.srishanth.opentrack360.ui.safety.SafetyAvailabilityScreen
 import me.srishanth.opentrack360.ui.safety.SosRecipientUi
+import me.srishanth.opentrack360.ui.safety.SosAcknowledgementPolicy
 import me.srishanth.opentrack360.ui.safety.SosScreen
 import me.srishanth.opentrack360.ui.safety.SosUiState
 import me.srishanth.opentrack360.ui.model.PermissionDiagnosticUi
@@ -322,6 +327,7 @@ fun OpenTrackAppRoot(
                 val me = runtime.api.loadMemberProfile()
                 profile = me
                 runtime.syncSharingEpoch(member.memberId, me.sharingEpoch)
+                runCatching { runtime.shareGateway.list() }
                 access = MemberAccessPolicy.afterFreshLogin(member.memberId, member.username, me.mustRotatePassword)
                 TrackingServiceController.syncPendingCommandsFromUserAction(activity)
                 reloadHome++
@@ -448,6 +454,7 @@ fun OpenTrackAppRoot(
                 runCatching { runtime.api.loadMemberProfile() }.onSuccess { me ->
                     profile = me
                     runtime.syncSharingEpoch(saved.memberId, me.sharingEpoch)
+                    runCatching { runtime.shareGateway.list() }
                 }
                 TrackingServiceController.syncPendingCommandsFromUserAction(activity)
                 reloadHome++
@@ -552,7 +559,10 @@ fun OpenTrackAppRoot(
                         id = row.optString("memberId", row.optString("id")),
                         displayName = row.optString("displayName", row.optString("username", "Circle member")),
                         roleLabel = row.optString("role", "member").replaceFirstChar(Char::uppercase),
-                        sharingLabel = row.optString("sharingState", "unknown").replace('_', ' '),
+                        sharingLabel = circleSharingLabel(
+                            row.takeIf { it.has("sharingEnabled") && !it.isNull("sharingEnabled") }
+                                ?.optBoolean("sharingEnabled"),
+                        ),
                         precision = row.optString("precision", "unknown"),
                     ),
                 )
@@ -643,18 +653,39 @@ fun OpenTrackAppRoot(
                             mapOf("memberId" to session!!.memberId, "from" to from, "to" to to, "limit" to "500"),
                         )
                         val rows = json.optJSONArray("data") ?: JSONArray()
-                        historyPoints = buildList {
+                        val historySamples = buildList {
                             for (index in 0 until rows.length()) {
                                 val row = rows.optJSONObject(index) ?: continue
-                                add(MapMarker(GeoPoint(row.optDouble("latitude"), row.optDouble("longitude")), stale = false))
+                                val capturedAt = runCatching { Instant.parse(row.optString("capturedAt")) }.getOrNull() ?: continue
+                                add(
+                                    HistoryStopSample(
+                                        latitude = row.optDouble("latitude", Double.NaN),
+                                        longitude = row.optDouble("longitude", Double.NaN),
+                                        accuracyMeters = row.optDouble("accuracyMeters", Double.NaN),
+                                        capturedAt = capturedAt,
+                                        speedMps = if (row.isNull("speedMps")) null else row.optDouble("speedMps", Double.NaN),
+                                        precision = row.optString("precision", ""),
+                                    ),
+                                )
                             }
+                        }
+                        historyPoints = historySamples.map { sample ->
+                            MapMarker(GeoPoint(sample.latitude, sample.longitude), stale = false)
+                        }
+                        val stops = deriveHistoryStops(historySamples).mapIndexed { index, stop ->
+                            HistoryStopUi(
+                                label = "Stop ${index + 1}",
+                                arrivalLabel = formatLocalTime(stop.startedAt.toString()),
+                                departureLabel = formatLocalTime(stop.endedAt.toString()),
+                            )
                         }
                         historyState = HistoryUiState(
                             condition = DataCondition.CONFIRMED,
-                            message = "History is limited to locations available under current Circle access and consent.",
+                            message = "Stops are inferred only from continuous, accurate, precise stationary fixes. Missing or approximate data is not treated as a stop.",
                             memberLabel = "You",
                             rangeLabel = "${formatLocalTime(from)} to ${formatLocalTime(to)}",
-                            routePointCount = rows.length(),
+                            stops = stops,
+                            routePointCount = historyPoints.size,
                         )
                     } else if (historyState.condition == DataCondition.UNKNOWN) {
                         historyState = HistoryUiState(DataCondition.PENDING, "Enter a valid UTC ISO 8601 range.")
@@ -687,7 +718,17 @@ fun OpenTrackAppRoot(
                     inboxItems = buildList {
                         for (index in 0 until rows.length()) {
                             val row = rows.optJSONObject(index) ?: continue
-                            add(InboxItemUi(row.optString("id"), row.optString("kind"), row.optString("title", "OpenTrack360 update"), row.optString("body"), row.optString("createdAt").let(::formatLocalTime), row.optString("deliveryState", "unknown"), !row.isNull("acknowledgedAt")))
+                            add(InboxItemUi(
+                                id = row.optString("id"),
+                                kind = row.optString("kind"),
+                                title = row.optString("title", "OpenTrack360 update"),
+                                body = row.optString("body"),
+                                createdAtLabel = row.optString("createdAt").let(::formatLocalTime),
+                                deliveryState = row.optString("deliveryState", "unknown"),
+                                acknowledged = !row.isNull("acknowledgedAt"),
+                                circleId = row.optNullableString("circleId"),
+                                sosId = row.optNullableString("sosId"),
+                            ))
                         }
                     }
                 }
@@ -705,11 +746,8 @@ fun OpenTrackAppRoot(
                     } else {
                         val tripId = active.optString("id").takeIf(String::isNotBlank)
                         val memberId = session?.memberId
-                        val lockScreenEnabled = if (active.has("shareLockScreenProgress")) {
-                            active.optBoolean("shareLockScreenProgress")
-                        } else {
-                            tripId != null && memberId != null && runtime.isTripLockScreenProgressEnabled(memberId, tripId)
-                        }
+                        val lockScreenEnabled = tripId != null && memberId != null &&
+                            runtime.isTripLockScreenProgressEnabled(memberId, tripId)
                         val destination = active.optNullableString("destinationLabel")
                         val eta = active.optNullableString("estimatedArrivalAt")?.let(::formatLocalTime)
                         val distance = active.optNullableInt("distanceRemainingMeters")
@@ -717,7 +755,7 @@ fun OpenTrackAppRoot(
                         tripState = TripProgressUiState(
                             active = true,
                             tripId = tripId,
-                            confirmedDriving = active.optBoolean("confirmedDrive", tripState.confirmedDriving && tripId == tripState.tripId),
+                            confirmedDriving = active.optBoolean("confirmedDrive", false),
                             condition = DataCondition.CONFIRMED,
                             message = "Trip progress is available to its selected Circle recipients.",
                             destinationLabel = destination,
@@ -753,7 +791,18 @@ fun OpenTrackAppRoot(
                     drivingReports = buildList {
                         for (index in 0 until rows.length()) {
                             val row = rows.optJSONObject(index) ?: continue
-                            add(DrivingReportUi(row.optString("tripId", row.optString("id")), row.optString("startedAt", "").let(::formatLocalTime), row.optNullableString("endedAt")?.let(::formatLocalTime), row.optString("classification", "unknown"), if (row.isNull("distanceMeters")) null else row.optDouble("distanceMeters"), row.optNullableInt("durationMinutes"), row.optNullableInt("harshEventCount")))
+                            val memberId = row.optString("memberId")
+                            add(
+                                DrivingReportUi(
+                                    tripId = row.optString("tripId"),
+                                    memberId = memberId,
+                                    memberLabel = circleState.members.firstOrNull { it.id == memberId }?.displayName,
+                                    startedAtLabel = row.optString("startedAt", "").let(::formatLocalTime),
+                                    endedAtLabel = row.optNullableString("endedAt")?.let(::formatLocalTime),
+                                    classification = row.optString("classification", "unknown"),
+                                    confirmedDrive = row.optBoolean("confirmedDrive", false),
+                                ),
+                            )
                         }
                     }
                 }
@@ -781,6 +830,32 @@ fun OpenTrackAppRoot(
                         isOwner = false
                         JSONObject()
                     }
+                    val routineTitlesById = buildMap {
+                        for (index in 0 until routines.length()) {
+                            val row = routines.optJSONObject(index) ?: continue
+                            val routineId = row.optString("id")
+                            if (routineId.isNotBlank()) put(routineId, row.optString("name", "Care routine"))
+                        }
+                    }
+                    val activityItems = buildList {
+                        for (index in 0 until activity.length()) {
+                            val row = activity.optJSONObject(index) ?: continue
+                            val routineId = row.optString("routineId")
+                            val completedByMemberId = row.optString("completedByMemberId")
+                            val completedAt = row.optString("completedAt")
+                            add(
+                                PetActivityUi(
+                                    routineId = routineId,
+                                    completedByMemberId = completedByMemberId,
+                                    completedAtIso = completedAt,
+                                    routineTitle = routineTitlesById[routineId] ?: "Care routine",
+                                    completedAtLabel = completedAt.let(::formatLocalTime),
+                                    memberLabel = circleState.members.firstOrNull { it.id == completedByMemberId }?.displayName,
+                                ),
+                            )
+                        }
+                    }
+                    val lastCompletedByRoutine = latestPetRoutineCompletionLabels(activityItems)
                     val reminderSpecs = buildList {
                         val memberId = current.memberId
                         for (index in 0 until routines.length()) {
@@ -805,9 +880,10 @@ fun OpenTrackAppRoot(
                                 if (localTime == null) "$frequency reminder" else "$frequency at $localTime"
                             }
                             val schedule = repeatLabel ?: row.optNullableString("dueAt")?.let(::formatLocalTime) ?: row.optNullableString("notes") ?: "No reminder time"
-                            add(PetRoutineUi(row.optString("id"), row.optString("name", "Care reminder"), "${row.optString("kind", "other").replaceFirstChar(Char::uppercase)} · $schedule", row.optNullableString("lastCompletedAt")?.let(::formatLocalTime)))
+                            val routineId = row.optString("id")
+                            add(PetRoutineUi(routineId, row.optString("name", "Care reminder"), "${row.optString("kind", "other").replaceFirstChar(Char::uppercase)} · $schedule", lastCompletedByRoutine[routineId]))
                         } },
-                        activity = buildList { for (index in 0 until activity.length()) activity.optJSONObject(index)?.let { add(PetActivityUi(it.optString("label", it.optString("kind", "Care update")), it.optString("createdAt", "").let(::formatLocalTime), it.optNullableString("memberDisplayName"))) } },
+                        activity = activityItems,
                         condition = DataCondition.CONFIRMED,
                         message = if (isOwner) "Your pet profile, recovery settings, routines and activity are loaded."
                             else "Shared pet profile, routines and activity are loaded. Owner-only recovery settings are hidden.",
@@ -819,6 +895,7 @@ fun OpenTrackAppRoot(
                     )
                 }
                 AppPage.SOS -> {
+                    if (sosState.alertId != null) return@LaunchedEffect
                     val base = circlePath ?: return@LaunchedEffect
                     val rows = list("$base/emergency-contacts")
                     sosState = sosState.copy(
@@ -919,12 +996,30 @@ fun OpenTrackAppRoot(
             runCatching { runtime.api.memberGet("circles/${circleId.uuidSegment()}/sos/${sosId.uuidSegment()}") }
                 .onSuccess { result ->
                     val recipients = result.optJSONArray("recipients") ?: JSONArray()
+                    val recipientStates = buildMap {
+                        for (index in 0 until recipients.length()) {
+                            val row = recipients.optJSONObject(index) ?: continue
+                            val recipientId = row.optString("recipientId")
+                            if (recipientId.isNotBlank()) put(recipientId, row.optString("state"))
+                        }
+                    }
                     sosState = sosState.copy(
+                        condition = DataCondition.CONFIRMED,
                         deliveryState = result.optString("status", sosState.deliveryState ?: "queued"),
+                        canAcknowledge = SosAcknowledgementPolicy.canAcknowledge(session?.memberId, recipientStates),
+                        statusMessage = null,
+                        errorMessage = null,
                         recipients = buildList { for (index in 0 until recipients.length()) recipients.optJSONObject(index)?.let { row ->
                             val existing = sosState.recipients.firstOrNull { it.id == row.optString("recipientId") }
                             add(SosRecipientUi(row.optString("recipientId"), existing?.name ?: "Circle contact", true, "in-app · ${row.optString("state", "queued")}"))
                         } },
+                    )
+                }
+                .onFailure { error ->
+                    sosState = sosState.copy(
+                        condition = DataCondition.OFFLINE,
+                        canAcknowledge = false,
+                        errorMessage = error.message ?: "SOS status is temporarily unavailable. Reconnecting…",
                     )
                 }
             delay(10_000)
@@ -1496,6 +1591,20 @@ fun OpenTrackAppRoot(
                         onAcknowledge = { ids -> scope.launch { runCatching { runtime.api.memberPatch("notifications", JSONObject().put("notificationIds", JSONArray(ids))) }
                             .onSuccess { reloadHome++ }
                             .onFailure { accountMessage = it.message ?: "Notifications could not be acknowledged." } } },
+                        onOpenSos = { circleId, sosId ->
+                            if (circleState.circles.none { it.id == circleId }) {
+                                accountMessage = "This SOS is no longer available in an accessible Circle."
+                            } else {
+                                selectedCircleId = circleId
+                                sosState = SosUiState(
+                                    condition = DataCondition.PENDING,
+                                    deliveryState = "Loading",
+                                    alertId = sosId,
+                                    statusMessage = "Loading Circle SOS status…",
+                                )
+                                page = AppPage.SOS
+                            }
+                        },
                     )
                     AppPage.TRIPS -> TripProgressScreen(
                         state = tripState,
@@ -1574,9 +1683,10 @@ fun OpenTrackAppRoot(
                         onStopTrip = { id, reason ->
                             val circleId = selectedCircleId ?: return@TripProgressScreen
                             scope.launch { runCatching { runtime.api.memberPost("circles/${circleId.uuidSegment()}/trips/${id.uuidSegment()}/stop", JSONObject()
-                                .put("clientRequestId", java.util.UUID.randomUUID().toString())
+                                .put("clientRequestId", runtime.tripStopClientRequestId(id))
                                 .put("endReason", reason)) }
                                 .onSuccess {
+                                    runtime.confirmTripStop(id)
                                     session?.memberId?.let { memberId ->
                                         runtime.clearTripLockScreenProgress(memberId, id)
                                         TrackingServiceController.refreshNotification(activity)
@@ -1778,7 +1888,36 @@ fun OpenTrackAppRoot(
                         onStartCountdown = { if (sosState.recipients.any { it.accepted }) { sosState = sosState.copy(countdownSecondsRemaining = 5, statusMessage = null, errorMessage = null); sosCountdownGeneration++ } },
                         onCancelCountdown = { sosCountdownGeneration++; sosState = sosState.copy(countdownSecondsRemaining = null, statusMessage = "SOS canceled before submission.", alertId = null) },
                         onCreateSos = { submitSos(it) },
-                        onAcknowledgeSos = { accountMessage = "Only an accepted SOS recipient can acknowledge an alert." },
+                        onAcknowledgeSos = { sosId ->
+                            val circleId = selectedCircleId
+                            if (circleId != null) scope.launch {
+                                sosState = sosState.copy(
+                                    condition = DataCondition.PENDING,
+                                    canAcknowledge = false,
+                                    statusMessage = "Recording your acknowledgement…",
+                                    errorMessage = null,
+                                )
+                                runCatching {
+                                    runtime.api.memberRequest(
+                                        "POST",
+                                        "circles/${circleId.uuidSegment()}/sos/${sosId.uuidSegment()}/acknowledge",
+                                    )
+                                }.onSuccess {
+                                    sosState = sosState.copy(
+                                        condition = DataCondition.CONFIRMED,
+                                        canAcknowledge = false,
+                                        statusMessage = "Your acknowledgement was recorded for this alert.",
+                                        errorMessage = null,
+                                    )
+                                }.onFailure { error ->
+                                    sosState = sosState.copy(
+                                        condition = DataCondition.ERROR,
+                                        statusMessage = null,
+                                        errorMessage = error.message ?: "Your acknowledgement could not be recorded.",
+                                    )
+                                }
+                            }
+                        },
                         onInviteEmergencyContact = { showEmergencyInviteDialog = true },
                     )
                     AppPage.SAFETY -> SafetyAvailabilityScreen(

@@ -10,15 +10,24 @@ import me.srishanth.opentrack360.sharing.SenderShare
 import me.srishanth.opentrack360.core.auth.KeystoreSessionStore
 import me.srishanth.opentrack360.tracking.AndroidKeystoreTrackingQueueCipher
 import me.srishanth.opentrack360.tracking.AndroidPermissionProbe
+import me.srishanth.opentrack360.tracking.ArrivalShareTarget
+import me.srishanth.opentrack360.tracking.ArrivalShareTargetStore
+import me.srishanth.opentrack360.tracking.DriveEndShareTarget
 import me.srishanth.opentrack360.tracking.DriveUpdate
 import me.srishanth.opentrack360.tracking.OfflineTrackingQueue
 import me.srishanth.opentrack360.tracking.SharedPreferencesTrackingBlobStorage
+import me.srishanth.opentrack360.tracking.SharedPreferencesTripStopRequestIdStorage
 import me.srishanth.opentrack360.tracking.TrackingRuntime
 import me.srishanth.opentrack360.tracking.TrackingRuntimeProvider
 import me.srishanth.opentrack360.tracking.TrackingScope
 import me.srishanth.opentrack360.tracking.TrackingStatus
 import me.srishanth.opentrack360.tracking.TrackingEngine
 import me.srishanth.opentrack360.tracking.TripProgressNotificationContent
+import me.srishanth.opentrack360.tracking.TripStopRequestIdStore
+import me.srishanth.opentrack360.sharing.CreateShareRequest
+import me.srishanth.opentrack360.sharing.CreatedShare
+import me.srishanth.opentrack360.sharing.ShareMode
+import me.srishanth.opentrack360.sharing.SenderShareStatus
 import java.util.UUID
 
 /** App-scoped clients. No backend service credential is shipped in the APK. */
@@ -27,8 +36,42 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
     private val sharingPreferences = appContext.getSharedPreferences(SHARING_PREFERENCES, Context.MODE_PRIVATE)
     val sessions = KeystoreSessionStore(appContext)
     val api = OpenTrackApi(sessions)
-    private val mutableDriveEndShares = MutableStateFlow<Set<String>>(emptySet())
-    val shareGateway = ApiShareGateway(api, ::cacheShares)
+    private val mutableDriveEndShares = MutableStateFlow<Map<String, BoundDriveEndShare>>(emptyMap())
+    private val arrivalShareTargets = ArrivalShareTargetStore(
+        SharedPreferencesTrackingBlobStorage(appContext, ARRIVAL_TARGETS_KEY),
+        AndroidKeystoreTrackingQueueCipher(),
+    )
+    private val tripStopRequestIds = TripStopRequestIdStore(SharedPreferencesTripStopRequestIdStorage(appContext))
+    val shareGateway = ApiShareGateway(
+        api,
+        ::cacheShares,
+        onShareCreated = { created, request ->
+            val memberId = sessions.load()?.memberId
+            val sessionId = memberId?.let { sharingPreferences.getString(sessionKey(it), null) }
+            if (memberId != null && sessionId != null && request is CreateShareRequest.UntilDestination) {
+                arrivalShareTargets.put(
+                    memberId,
+                    sessionId,
+                    ArrivalShareTarget(created.id, request.latitude, request.longitude, request.radiusMeters),
+                )
+            }
+            if (request is CreateShareRequest.UntilDriveEnd && created.status.wireValue == "active") {
+                val memberId = sessions.load()?.memberId
+                val sessionId = memberId?.let { sharingPreferences.getString(sessionKey(it), null) }
+                val target = created.asDriveEndTarget()
+                if (memberId != null && sessionId != null && target?.sharingEpoch == sharingEpoch(memberId)) {
+                    mutableDriveEndShares.value = mutableDriveEndShares.value +
+                        (created.id to BoundDriveEndShare(memberId, sessionId, target))
+                } else {
+                    mutableDriveEndShares.value = mutableDriveEndShares.value - created.id
+                }
+            }
+        },
+        onShareRevoked = { shareId ->
+            arrivalShareTargets.removeForShare(shareId)
+            mutableDriveEndShares.value = mutableDriveEndShares.value - shareId
+        },
+    )
     val trackingTransport = ApiTrackingTransport(api)
     val trackingEngine = TrackingEngine()
     val trackingQueue = OfflineTrackingQueue(
@@ -46,6 +89,8 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
 
     fun startMemberSession(memberId: String): String {
         val sessionId = UUID.randomUUID().toString()
+        arrivalShareTargets.clearExcept(memberId, sessionId)
+        mutableDriveEndShares.value = mutableDriveEndShares.value.filterValues { it.memberId != memberId }
         sharingPreferences.edit().putString(sessionKey(memberId), sessionId).commit()
         return sessionId
     }
@@ -56,14 +101,49 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
     }
 
     private fun cacheShares(shares: List<SenderShare>) {
-        mutableDriveEndShares.value = shares.asSequence()
-            .filter { it.status.wireValue == "active" && it.mode.wireValue == "drive_end" }
-            .map { it.id }
-            .toSet()
+        val ownerId = sessions.load()?.memberId
+        val sessionId = ownerId?.let { sharingPreferences.getString(sessionKey(it), null) }
+        val epoch = ownerId?.let(::sharingEpoch)
+        mutableDriveEndShares.value = if (ownerId != null && sessionId != null && epoch != null) {
+            shares.asSequence()
+                .filter { it.status == SenderShareStatus.ACTIVE && it.mode == ShareMode.DRIVE_END }
+                .mapNotNull { share ->
+                    val target = share.asDriveEndTarget() ?: return@mapNotNull null
+                    if (target.sharingEpoch != epoch) return@mapNotNull null
+                    share.id to BoundDriveEndShare(ownerId, sessionId, target)
+                }
+                .toMap()
+        } else {
+            emptyMap()
+        }
+        if (ownerId != null && sessionId != null) {
+            shares.asSequence()
+                .filter { it.mode.wireValue == "destination" && it.status.wireValue == "active" }
+                .forEach { share ->
+                    val destination = share.destination ?: return@forEach
+                    arrivalShareTargets.put(
+                        ownerId,
+                        sessionId,
+                        ArrivalShareTarget(
+                            shareId = share.id,
+                            latitude = destination.latitude,
+                            longitude = destination.longitude,
+                            radiusMeters = destination.radiusMeters,
+                        ),
+                    )
+                }
+        }
+        shares.asSequence()
+            .filter { it.mode.wireValue == "destination" && (it.status.wireValue != "active" || it.destination == null) }
+            .forEach { arrivalShareTargets.removeForShare(it.id) }
     }
 
     fun endMemberSession(memberId: String?) {
-        if (memberId != null) sharingPreferences.edit().remove(sessionKey(memberId)).commit()
+        if (memberId != null) {
+            arrivalShareTargets.clearFor(memberId)
+            mutableDriveEndShares.value = mutableDriveEndShares.value.filterValues { it.memberId != memberId }
+            sharingPreferences.edit().remove(sessionKey(memberId)).commit()
+        }
     }
 
     fun setSharingConsent(memberId: String, accepted: Boolean) {
@@ -72,6 +152,7 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
             .putLong(generationKey(memberId), generation(memberId) + 1)
         if (!accepted) editor.putBoolean(sharingEnabledKey(memberId), false)
         editor.commit()
+        if (!accepted) arrivalShareTargets.clearFor(memberId)
     }
 
     fun setSharingEnabled(memberId: String, enabled: Boolean) {
@@ -89,12 +170,19 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
 
     fun updateSharingEpoch(memberId: String?, epoch: Long) {
         if (memberId == null || epoch < 1) return
+        if (sharingPreferences.getLong(epochKey(memberId), 1) != epoch) arrivalShareTargets.clearFor(memberId)
         sharingPreferences.edit().putLong(epochKey(memberId), epoch).commit()
     }
 
     fun syncSharingEpoch(memberId: String, epoch: Long) = updateSharingEpoch(memberId, epoch)
 
     fun sharingEpoch(memberId: String): Long = sharingPreferences.getLong(epochKey(memberId), 1)
+
+    fun tripStopClientRequestId(tripId: String): String = tripStopRequestIds.clientRequestIdFor(tripId)
+
+    fun confirmTripStop(tripId: String) {
+        tripStopRequestIds.markCompleted(tripId)
+    }
 
     fun isTripLockScreenProgressEnabled(memberId: String, tripId: String): Boolean =
         sharingPreferences.getBoolean(tripLockScreenKey(memberId, tripId), false)
@@ -166,17 +254,29 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
         sharingEnabled = {
             sessions.load()?.let { sharingIsEnabled(it.memberId) } ?: false
         },
-        activeDriveEndShareIds = { mutableDriveEndShares.value.toList() },
+        activeDriveEndShareTargets = { scope ->
+            mutableDriveEndShares.value.values
+                .filter { it.memberId == scope.userId && it.sessionId == scope.sessionId && it.target.sharingEpoch == scope.sharingEpoch }
+                .map { it.target }
+        },
+        onDriveEndShareEventQueued = { shareId -> mutableDriveEndShares.value = mutableDriveEndShares.value - shareId },
+        activeArrivalShareTargets = { scope -> arrivalShareTargets.activeFor(scope.userId, scope.sessionId) },
+        onArrivalShareEventQueued = { scope, shareId -> arrivalShareTargets.remove(scope.userId, scope.sessionId, shareId) },
         onDriveUpdate = { mutableDriveUpdate.value = it },
         onSharingEpoch = { memberId, epoch -> updateSharingEpoch(memberId, epoch) },
         onTrackingStatus = { status ->
             mutableTrackingStatus.value = status
+            if (status == TrackingStatus.CONSENT_REVOKED) {
+                sessions.load()?.memberId?.let(arrivalShareTargets::clearFor)
+            }
             if (status in setOf(TrackingStatus.STOPPED, TrackingStatus.PERMISSION_LOST, TrackingStatus.CONSENT_REVOKED)) {
                 clearLiveTripProgressNotification()
             }
         },
         tripProgressNotification = { liveTripProgressNotification },
         onGlobalStop = {
+            arrivalShareTargets.clearAll()
+            mutableDriveEndShares.value = emptyMap()
             val memberId = sessions.load()?.memberId
             if (memberId != null) {
                 val editor = sharingPreferences.edit()
@@ -191,6 +291,59 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
 
     private fun generation(memberId: String): Long = sharingPreferences.getLong(generationKey(memberId), 0)
 
+    private fun CreatedShare.asDriveEndTarget(): DriveEndShareTarget? = buildDriveEndTarget(
+        shareId = id,
+        mode = mode,
+        status = status,
+        shareStartedAt = startedAt,
+        tripId = tripId,
+        tripStartedAt = tripStartedAt,
+        tripSessionMatchesCurrent = tripSessionMatchesCurrent,
+        sharingEpoch = sharingEpoch,
+    )
+
+    private fun SenderShare.asDriveEndTarget(): DriveEndShareTarget? = buildDriveEndTarget(
+        shareId = id,
+        mode = mode,
+        status = status,
+        shareStartedAt = startedAt,
+        tripId = tripId,
+        tripStartedAt = tripStartedAt,
+        tripSessionMatchesCurrent = tripSessionMatchesCurrent,
+        sharingEpoch = sharingEpoch,
+    )
+
+    private fun buildDriveEndTarget(
+        shareId: String,
+        mode: ShareMode,
+        status: SenderShareStatus,
+        shareStartedAt: java.time.Instant,
+        tripId: String?,
+        tripStartedAt: java.time.Instant?,
+        tripSessionMatchesCurrent: Boolean?,
+        sharingEpoch: Long,
+    ): DriveEndShareTarget? {
+        if (mode != ShareMode.DRIVE_END || status != SenderShareStatus.ACTIVE || tripSessionMatchesCurrent != true) return null
+        val linkedTripId = tripId ?: return null
+        val linkedTripStartedAt = tripStartedAt ?: return null
+        return runCatching {
+            DriveEndShareTarget(
+                shareId = shareId,
+                tripId = linkedTripId,
+                shareStartedAt = shareStartedAt,
+                tripStartedAt = linkedTripStartedAt,
+                tripSessionMatchesCurrent = true,
+                sharingEpoch = sharingEpoch,
+            )
+        }.getOrNull()
+    }
+
+    private data class BoundDriveEndShare(
+        val memberId: String,
+        val sessionId: String,
+        val target: DriveEndShareTarget,
+    )
+
     private fun sessionKey(memberId: String) = "session_$memberId"
     private fun consentKey(memberId: String) = "consent_$memberId"
     private fun generationKey(memberId: String) = "consent_generation_$memberId"
@@ -202,5 +355,6 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
 
     private companion object {
         const val SHARING_PREFERENCES = "sharing_controls"
+        const val ARRIVAL_TARGETS_KEY = "encrypted_arrival_targets_v1"
     }
 }

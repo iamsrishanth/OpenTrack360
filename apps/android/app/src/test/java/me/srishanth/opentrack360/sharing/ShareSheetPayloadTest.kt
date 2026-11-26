@@ -38,6 +38,10 @@ class ShareSheetPayloadTest {
             createdAt = Instant.parse("2026-11-26T10:00:00Z"),
             expiresAt = null,
             endCondition = "When a confirmed drive ends",
+            tripId = "71717171-7171-4717-8717-717171717171",
+            tripStartedAt = Instant.parse("2026-11-26T09:30:00Z"),
+            tripSessionMatchesCurrent = true,
+            sharingEpoch = 1,
         )
         assertFalse(created.toString().contains(secret))
         assertFalse(created.toString().contains(link))
