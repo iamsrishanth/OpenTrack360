@@ -53,6 +53,8 @@ import me.srishanth.opentrack360.sharing.CircleInviteRequest
 import me.srishanth.opentrack360.sharing.PetRecoveryRequest
 import me.srishanth.opentrack360.sharing.PetRecoveryLinkParser
 import me.srishanth.opentrack360.sharing.ShareManagementScreen
+import me.srishanth.opentrack360.pets.reminders.PetRoutineReminderScheduler
+import me.srishanth.opentrack360.pets.reminders.PetRoutineReminderSpec
 import me.srishanth.opentrack360.tracking.AndroidPermissionProbe
 import me.srishanth.opentrack360.tracking.LocationPrecision
 import me.srishanth.opentrack360.tracking.TrackingServiceController
@@ -142,6 +144,8 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import java.net.URLEncoder
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -168,6 +172,7 @@ fun OpenTrackAppRoot(
     onCloseCircleInvite: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val petReminderScheduler = remember(activity.applicationContext) { PetRoutineReminderScheduler(activity.applicationContext) }
     val trackingStatus by runtime.trackingStatus.collectAsState()
     var session by remember { mutableStateOf<MemberSession?>(null) }
     var profile by remember { mutableStateOf<MemberProfile?>(null) }
@@ -244,6 +249,8 @@ fun OpenTrackAppRoot(
     var routineSchedule by remember { mutableStateOf("") }
     var routineKind by remember { mutableStateOf("other") }
     var routineDueAt by remember { mutableStateOf("") }
+    var routineRepeat by remember { mutableStateOf("none") }
+    var routineLocalTime by remember { mutableStateOf(LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))) }
     var lostPetExpiresAt by remember { mutableStateOf(Instant.now().plusSeconds(86_400).toString()) }
     var lostPetMessage by remember { mutableStateOf("") }
     var lostPetCircles by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -404,6 +411,7 @@ fun OpenTrackAppRoot(
 
     LaunchedEffect(Unit) {
         val saved = runtime.sessions.load()
+        runCatching { petReminderScheduler.activateMember(saved?.memberId) }
         session = saved
         if (saved == null) {
             access = MemberAccessState.SignedOut
@@ -425,7 +433,8 @@ fun OpenTrackAppRoot(
         booting = false
     }
 
-    LaunchedEffect(session?.memberId) {
+    LaunchedEffect(session?.memberId, booting) {
+        if (!booting && session == null) petReminderScheduler.clearAll()
         if (session == null) {
             pendingCircleInviteUrl = null
             pendingCircleInviteCircleId = null
@@ -507,6 +516,7 @@ fun OpenTrackAppRoot(
     }
 
     LaunchedEffect(page, reloadHome, selectedCircleId, selectedPlaceId, selectedPetId) {
+        val current = session ?: return@LaunchedEffect
         val circleId = selectedCircleId
         val circlePath = circleId?.let { "circles/${it.uuidSegment()}" }
         suspend fun list(path: String) = runtime.api.memberGet(path).optJSONArray("data") ?: JSONArray()
@@ -748,6 +758,14 @@ fun OpenTrackAppRoot(
                         isOwner = false
                         JSONObject()
                     }
+                    val reminderSpecs = buildList {
+                        val memberId = current.memberId
+                        for (index in 0 until routines.length()) {
+                            val row = routines.optJSONObject(index) ?: continue
+                            PetRoutineReminderSpec.fromApi(memberId, pet.id, row)?.let(::add)
+                        }
+                    }
+                    runCatching { petReminderScheduler.syncPet(current.memberId, pet.id, reminderSpecs) }
                     petDetail = PetDetailUiState(
                         pet = pet.copy(
                             photoUrl = profileJson.optNullableString("photoUrl") ?: pet.photoUrl,
@@ -755,7 +773,15 @@ fun OpenTrackAppRoot(
                         ),
                         isOwner = isOwner,
                         routines = buildList { for (index in 0 until routines.length()) routines.optJSONObject(index)?.let { row ->
-                            val schedule = row.optNullableString("dueAt")?.let(::formatLocalTime) ?: row.optNullableString("notes") ?: "No reminder time"
+                            val recurrence = row.optJSONObject("recurrence")
+                            val repeatLabel = recurrence?.let {
+                                val frequency = it.optString("frequency").replaceFirstChar(Char::uppercase)
+                                val localTime = it.optNullableString("localTime")?.let { value ->
+                                    runCatching { LocalTime.parse(value).format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())) }.getOrNull()
+                                }
+                                if (localTime == null) "$frequency reminder" else "$frequency at $localTime"
+                            }
+                            val schedule = repeatLabel ?: row.optNullableString("dueAt")?.let(::formatLocalTime) ?: row.optNullableString("notes") ?: "No reminder time"
                             add(PetRoutineUi(row.optString("id"), row.optString("name", "Care reminder"), "${row.optString("kind", "other").replaceFirstChar(Char::uppercase)} · $schedule", row.optNullableString("lastCompletedAt")?.let(::formatLocalTime)))
                         } },
                         activity = buildList { for (index in 0 until activity.length()) activity.optJSONObject(index)?.let { add(PetActivityUi(it.optString("label", it.optString("kind", "Care update")), it.optString("createdAt", "").let(::formatLocalTime), it.optNullableString("memberDisplayName"))) } },
@@ -1595,8 +1621,10 @@ fun OpenTrackAppRoot(
                         state = state,
                         recoveryQrBitmap = remember(petRecoveryUrl) { petRecoveryUrl?.let(::createRecoveryQrBitmap) },
                         routineTitle = routineTitle, routineSchedule = routineSchedule, routineKind = routineKind, routineDueAt = routineDueAt,
+                        routineRepeat = routineRepeat, routineLocalTime = routineLocalTime,
                         onRoutineTitleChange = { routineTitle = it }, onRoutineScheduleChange = { routineSchedule = it },
                         onRoutineKindChange = { routineKind = it }, onRoutineDueAtChange = { routineDueAt = it },
+                        onRoutineRepeatChange = { routineRepeat = it }, onRoutineLocalTimeChange = { routineLocalTime = it },
                         onRecoveryFieldSelected = { field, selected -> if (state.isOwner) petDetail = state.copy(recoveryFields = if (selected) state.recoveryFields + field else state.recoveryFields - field) },
                         onOwnerMessageChange = { value -> if (state.isOwner) petDetail = petDetail?.copy(ownerMessage = value.take(500)) },
                         onContactRouteChange = { value -> if (state.isOwner) petDetail = petDetail?.copy(contactRoute = value.take(200)) },
@@ -1620,20 +1648,49 @@ fun OpenTrackAppRoot(
                                 .onFailure { accountMessage = it.message ?: "Recovery privacy settings could not be saved." } }
                         },
                         onOpenPhotoPicker = { if (state.isOwner) petPhotoPicker.launch("image/*") },
-                        onCreateRoutine = { id, title, kind, notes, dueAt ->
-                            scope.launch { runCatching { runtime.api.memberPost("pets/${id.uuidSegment()}/routines", JSONObject()
-                                .put("clientRequestId", java.util.UUID.randomUUID().toString())
-                                .put("name", title)
-                                .put("kind", kind)
-                                .put("notes", notes.takeIf(String::isNotBlank) ?: JSONObject.NULL)
-                                .put("dueAt", dueAt ?: JSONObject.NULL)
-                                .put("recurrence", JSONObject.NULL)) }
-                                .onSuccess { routineTitle = ""; routineSchedule = ""; routineDueAt = ""; reloadHome++ }
+                        onCreateRoutine = { id, title, kind, notes, dueAt, repeat, localTime ->
+                            scope.launch { runCatching {
+                                val zone = ZoneId.systemDefault()
+                                val recurrence = repeat?.let { frequency ->
+                                    JSONObject()
+                                        .put("frequency", frequency)
+                                        .put("interval", 1)
+                                        .put("localTime", localTime)
+                                        .put("timeZone", zone.id)
+                                        .apply {
+                                            if (frequency == "weekly") {
+                                                val weekday = dueAt?.let { runCatching { Instant.parse(it).atZone(zone).dayOfWeek.value }.getOrNull() }
+                                                    ?: LocalDate.now(zone).dayOfWeek.value
+                                                put("weekdays", JSONArray().put(weekday))
+                                            }
+                                        }
+                                }
+                                runtime.api.memberPost("pets/${id.uuidSegment()}/routines", JSONObject()
+                                    .put("clientRequestId", java.util.UUID.randomUUID().toString())
+                                    .put("name", title)
+                                    .put("kind", kind)
+                                    .put("notes", notes.takeIf(String::isNotBlank) ?: JSONObject.NULL)
+                                    .put("dueAt", dueAt ?: JSONObject.NULL)
+                                    .put("recurrence", recurrence ?: JSONObject.NULL))
+                            }
+                                .onSuccess { response ->
+                                    session?.memberId?.let { memberId ->
+                                        runCatching {
+                                            PetRoutineReminderSpec.fromApi(memberId, id, response.optJSONObject("data") ?: response)
+                                                ?.let(petReminderScheduler::upsert)
+                                        }
+                                    }
+                                    routineTitle = ""
+                                    routineSchedule = ""
+                                    routineDueAt = ""
+                                    routineRepeat = "none"
+                                    reloadHome++
+                                }
                                 .onFailure { accountMessage = it.message ?: "Care routine could not be created." } }
                         },
                         onCompleteRoutine = { id, routineId ->
                             scope.launch { runCatching { runtime.api.memberPost("pets/${id.uuidSegment()}/routines/${routineId.uuidSegment()}/complete", JSONObject().put("clientEventId", java.util.UUID.randomUUID().toString())) }
-                                .onSuccess { reloadHome++ }
+                                .onSuccess { session?.memberId?.let { memberId -> runCatching { petReminderScheduler.onRoutineCompleted(memberId, routineId) } }; reloadHome++ }
                                 .onFailure { accountMessage = it.message ?: "Care routine could not be marked complete." } }
                         },
                         onCreateRecoveryLink = { id ->
@@ -1664,7 +1721,7 @@ fun OpenTrackAppRoot(
                         onDeletePet = { id ->
                             if (!state.isOwner) return@PetDetailScreen
                             scope.launch { runCatching { runtime.api.memberDelete("pets/${id.uuidSegment()}") }
-                                .onSuccess { selectedPetId = null; petDetail = null; page = AppPage.PETS; reloadHome++ }
+                                .onSuccess { session?.memberId?.let { memberId -> runCatching { petReminderScheduler.removePet(memberId, id) } }; selectedPetId = null; petDetail = null; page = AppPage.PETS; reloadHome++ }
                                 .onFailure { accountMessage = it.message ?: "Pet profile could not be deleted." } }
                         },
                         onBack = { page = AppPage.PETS },

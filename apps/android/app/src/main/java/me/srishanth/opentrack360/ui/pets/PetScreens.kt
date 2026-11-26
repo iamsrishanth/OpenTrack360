@@ -1,8 +1,12 @@
 package me.srishanth.opentrack360.ui.pets
 
+import android.app.NotificationManager
+import android.content.Context
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.Image
 import androidx.compose.material3.FilterChip
@@ -11,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import me.srishanth.opentrack360.ui.components.DestructiveActionButton
 import me.srishanth.opentrack360.ui.components.EmptyStateCard
@@ -27,6 +32,7 @@ import me.srishanth.opentrack360.ui.model.AudienceChoiceUi
 import me.srishanth.opentrack360.ui.model.PetRoutineUi
 import me.srishanth.opentrack360.ui.model.PetUi
 import java.time.Instant
+import java.time.LocalTime
 
 data class PetActivityUi(val label: String, val timeLabel: String, val memberLabel: String?)
 
@@ -101,16 +107,20 @@ fun PetDetailScreen(
     routineSchedule: String,
     routineKind: String,
     routineDueAt: String,
+    routineRepeat: String,
+    routineLocalTime: String,
     onRoutineTitleChange: (String) -> Unit,
     onRoutineScheduleChange: (String) -> Unit,
     onRoutineKindChange: (String) -> Unit,
     onRoutineDueAtChange: (String) -> Unit,
+    onRoutineRepeatChange: (String) -> Unit,
+    onRoutineLocalTimeChange: (String) -> Unit,
     onRecoveryFieldSelected: (field: String, selected: Boolean) -> Unit,
     onOwnerMessageChange: (String) -> Unit,
     onContactRouteChange: (String) -> Unit,
     onUpdateRecoverySettings: (petId: String, enabled: Boolean, fields: List<String>, ownerMessage: String, contactRoute: String) -> Unit,
     onOpenPhotoPicker: () -> Unit,
-    onCreateRoutine: (petId: String, title: String, kind: String, notes: String, dueAt: String?) -> Unit,
+    onCreateRoutine: (petId: String, title: String, kind: String, notes: String, dueAt: String?, repeat: String?, localTime: String?) -> Unit,
     onCompleteRoutine: (petId: String, routineId: String) -> Unit,
     onCreateRecoveryLink: (petId: String) -> Unit,
     onRevokeRecoveryLink: (petId: String) -> Unit,
@@ -120,6 +130,9 @@ fun PetDetailScreen(
     onBack: () -> Unit,
 ) {
     val pet = state.pet
+    val context = LocalContext.current
+    val notificationsEnabled = (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+        ?.areNotificationsEnabled() != false
     MemberScreen(title = pet.name, subtitle = "${pet.speciesLabel} · shared with ${pet.sharedCircleNames.takeIf { it.isNotEmpty() }?.joinToString() ?: "no Circles"}") {
         StatusBanner(state.condition, "Pet profile", state.message)
         MemberCard {
@@ -198,6 +211,13 @@ fun PetDetailScreen(
             }
         }
         SectionHeading("Care routines")
+        if (!notificationsEnabled) {
+            StatusBanner(
+                DataCondition.PENDING,
+                "Notifications are off",
+                "Android notification access is disabled. Scheduled care reminders cannot alert until notifications are enabled in system settings.",
+            )
+        }
         if (state.routines.isEmpty()) EmptyStateCard("No routines", "Add a feeding, walk, medication, grooming, or other care reminder.")
         state.routines.forEach { routine ->
             MemberCard {
@@ -209,18 +229,57 @@ fun PetDetailScreen(
         }
         MemberCard {
             OutlinedTextField(routineTitle, onRoutineTitleChange, label = { Text("Routine name") }, modifier = Modifier.fillMaxWidth())
+            Text("Android may delay reminders during battery saver or Doze. Notifications must be enabled in system settings.")
             Text("Care type")
             listOf("feeding", "medication", "walk", "grooming", "other").forEach { kind ->
                 FilterChip(routineKind == kind, { onRoutineKindChange(kind) }, label = { Text(kind.replaceFirstChar { it.uppercase() }) })
             }
             OutlinedTextField(routineSchedule, onRoutineScheduleChange, label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(routineDueAt, onRoutineDueAtChange, label = { Text("Reminder time (UTC ISO 8601, optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            SectionHeading("Repeat")
+            Row {
+                listOf("none" to "Once", "daily" to "Daily", "weekly" to "Weekly").forEach { (value, label) ->
+                    FilterChip(
+                        selected = routineRepeat == value,
+                        onClick = { onRoutineRepeatChange(value) },
+                        label = { Text(label) },
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                }
+            }
+            OutlinedTextField(
+                routineDueAt,
+                onRoutineDueAtChange,
+                label = { Text(if (routineRepeat == "none") "Reminder time (UTC ISO 8601, optional)" else "First reminder time (UTC ISO 8601, optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val localTimeValid = routineRepeat == "none" || runCatching { LocalTime.parse(routineLocalTime) }.isSuccess
+            if (routineRepeat != "none") {
+                OutlinedTextField(
+                    routineLocalTime,
+                    onRoutineLocalTimeChange,
+                    label = { Text("Repeat time (24-hour local time)") },
+                    supportingText = { Text("Weekly reminders repeat on the weekday of the first reminder, or today when no first date is set.") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             val dueAtValid = routineDueAt.isBlank() || runCatching { Instant.parse(routineDueAt) }.isSuccess
             PrimaryAction(
                 "Add care reminder",
-                { onCreateRoutine(pet.id, routineTitle.trim(), routineKind, routineSchedule.trim(), routineDueAt.trim().takeIf(String::isNotBlank)) },
+                {
+                    onCreateRoutine(
+                        pet.id,
+                        routineTitle.trim(),
+                        routineKind,
+                        routineSchedule.trim(),
+                        routineDueAt.trim().takeIf(String::isNotBlank),
+                        routineRepeat.takeIf { it != "none" },
+                        routineLocalTime.takeIf { routineRepeat != "none" },
+                    )
+                },
                 Modifier.fillMaxWidth(),
-                routineTitle.isNotBlank() && dueAtValid,
+                routineTitle.isNotBlank() && dueAtValid && localTimeValid,
             )
         }
         SectionHeading("Activity")

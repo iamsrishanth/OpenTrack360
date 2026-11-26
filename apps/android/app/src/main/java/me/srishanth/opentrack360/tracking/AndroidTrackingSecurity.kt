@@ -36,6 +36,7 @@ class SharedPreferencesTrackingBlobStorage(context: Context) : TrackingBlobStora
 /** AES-GCM key is non-exportable and generated/stored by Android Keystore. */
 class AndroidKeystoreTrackingQueueCipher(
     private val alias: String = DEFAULT_KEY_ALIAS,
+    private val unlockedDeviceRequired: Boolean = true,
 ) : TrackingQueueCipher {
     override fun encrypt(plaintext: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -64,7 +65,7 @@ class AndroidKeystoreTrackingQueueCipher(
         ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setRandomizedEncryptionRequired(true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) builder.setUnlockedDeviceRequired(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && unlockedDeviceRequired) builder.setUnlockedDeviceRequired(true)
         keyGenerator.init(builder.build())
         return keyGenerator.generateKey()
     }
