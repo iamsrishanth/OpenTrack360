@@ -15,7 +15,11 @@ This is a dated evidence snapshot, not a claim that the complete production acce
 | --- | --- | --- |
 | Production `https://track.srishanth.me/` | HTTP 200; deployment uses `main` revision `45dbe9f56383179f1227d3eed90b1690fa562271` | The custom-domain site is serving HTML. |
 | Production `GET /api/v1/me` without a bearer token | HTTP 401 with generic `unauthorized` response | The versioned route is present and rejects an unauthenticated caller. It does not prove a database-backed member flow. |
+| Production `GET /api/v1/admin/accounts` without an admin session | HTTP 401; `Cache-Control: no-store` | The account-management API rejects a signed-out caller. |
+| Production `GET /api/v1/shares` without a member bearer token | HTTP 401; `Cache-Control: no-store, private` | The sender-only share list is not available to a signed-out caller. |
 | Production `GET /api/v1/public/shares/00000000-0000-4000-8000-000000000000` | HTTP 404 with generic `NOT_FOUND` response | An unknown share ID returns no location. It does not prove a valid share flow. |
+| Production `/s/00000000-0000-4000-8000-000000000000` | HTTP 200 guest-viewer shell; `Cache-Control: private, no-store`; `Referrer-Policy: no-referrer`; `X-Robots-Tag: noindex, nofollow, noarchive` | The viewer shell loads without exposing a location; data still requires the fragment secret in the bearer header. |
+| Production `/admin` | HTTP 200 login shell; `Referrer-Policy: no-referrer`; `X-Robots-Tag: noindex, nofollow, noarchive` | The public HTML contains the sign-in shell only. Account data is requested from the separately authenticated, no-store API. |
 | Production `GET /.well-known/assetlinks.json` | HTTP 200, body `[]` | The file is served, but no Android package/signing association is configured. |
 | Vercel preview for `teams/web-platform` | READY at [opentrack360-67slznlpt-srishanths-projects.vercel.app](https://opentrack360-67slznlpt-srishanths-projects.vercel.app), revision `676c4bf71973286fdf895048ce5da55acdb887e3` | Vercel built this source revision. The deployment is SSO-protected and is not evidence of production database acceptance. |
 
@@ -30,6 +34,7 @@ The Vercel checks on PR #2 are green: `Vercel` and `Vercel Preview Comments`. Th
 - `git diff --check`: clean at the implementation checkpoint.
 - `npm audit --audit-level=high`: no high or critical findings.
 - Vercel preview build: READY; both GitHub preview checks pass.
+- Migration `20261127000300_opentrack_sos_trip_share_resume.sql` executed in temporary PGlite against minimal local schemas and synthetic function definitions. Its 17 exact source-fragment replacements applied across the dispatcher (8), share creation (1), share event validation (7), and share list (1). This checks migration patch preconditions and SQL installation in the harness; it does not validate the target Supabase schema or execute the patched business flows.
 - Migration `20261127000400_opentrack_share_trip_start_projection.sql` executed in a temporary PGlite harness with synthetic rows. Create/list returned the linked trip ID, start time, session-match boolean and epoch; mismatched session or epoch returned `false`. This validates the projection behavior in that harness only; it is not a Supabase migration run or a full schema test.
 
 ## Database and signed-in acceptance still pending
