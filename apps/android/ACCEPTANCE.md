@@ -42,7 +42,7 @@ Status terms:
 
 | Check | Result |
 | --- | --- |
-| Source branch / contract head | `android/implementation`; lock-screen trip progress is committed at `a86f59c238cce69f4e1c10919c12081017f60208`, based on contract fixture checkout `3d035bf` (web contract head `694519c`). The web team's later contract follow-up for standalone Circle-independent `drive_end` shares remains outside this Android checkout until it is committed. |
+| Source branch / contract head | `android/implementation`; tested Android implementation commit `a4cc3f1a85264377b0b299c8daaa4f534bcafb40` adds pet reminders atop lock-screen trip progress (`a86f59c238cce69f4e1c10919c12081017f60208`), based on contract fixture checkout `3d035bf` (shared web contract head `694519c`). The web team's later contract follow-up for standalone Circle-independent `drive_end` shares remains outside this Android checkout until it is committed. |
 | Gradle unit tests | `:app:testDebugUnitTest` — 43 tests, 0 failures/errors, including strict Circle invite-link parsing, explicit drive-end confirmation, pet owner-controls default-hidden policy, lock-screen trip notification privacy/formatting, and pet reminder recurrence in `Asia/Kolkata`. |
 | Debug build | `:app:assembleDebug` succeeded. Installable APK: `apps/android/app/build/outputs/apk/debug/app-debug.apk` (97,214,083 bytes; SHA-256 `0D093DB5268693957E7C0D8DFC58E15946D0819CC28A3FFEF2471B1D76E1FC15`). |
 | Release build | `:app:assembleRelease` and `:app:lintVitalRelease` passed. Unsigned APK: `apps/android/app/build/outputs/apk/release/app-release-unsigned.apk` (70,864,667 bytes; SHA-256 `4FA8548FBD2575404FC9A1BAF3C319B224B428E5E6E8B1838331428823F7B4BB`). The release variant has no signing config, so it is not a distributable signed APK. |
