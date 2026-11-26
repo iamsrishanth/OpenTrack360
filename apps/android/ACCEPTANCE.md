@@ -42,7 +42,7 @@ Status terms:
 
 | Check | Result |
 | --- | --- |
-| Source branch / contract head | `android/implementation`, currently based on contract commit `3d035bf` (cherry-pick of web contract head `694519c`). The app implementation is not yet committed; record its final commit after the contract follow-up is integrated. |
+| Source branch / contract head | `android/implementation`; lock-screen trip progress is committed at `a86f59c238cce69f4e1c10919c12081017f60208`, based on contract fixture checkout `3d035bf` (web contract head `694519c`). The web team's later contract follow-up for standalone Circle-independent `drive_end` shares remains outside this Android checkout until it is committed. |
 | Gradle unit tests | `:app:testDebugUnitTest` — 40 tests, 0 failures/errors, including strict Circle invite-link parsing, explicit drive-end confirmation, pet owner-controls default-hidden policy, and lock-screen trip notification privacy/formatting. |
 | Debug build | `:app:assembleDebug` succeeded. Installable APK: `apps/android/app/build/outputs/apk/debug/app-debug.apk` (97,214,024 bytes). |
 | Release build | `:app:assembleRelease` and release `lintVital` passed. The release variant has no signing config, so it is not a distributable signed APK. |
