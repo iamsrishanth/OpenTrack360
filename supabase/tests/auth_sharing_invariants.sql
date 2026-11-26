@@ -94,8 +94,7 @@ with started as materialized (
     jsonb_build_object('path',jsonb_build_object('circleId','44444444-4444-4444-8444-444444444444'),'query','{}'::jsonb,
       'body',jsonb_build_object('recipientMemberIds',jsonb_build_array('11111111-1111-4111-8111-111111111111'),'confirmedDrive',true)),1) result
 )
-select extensions.diag(jsonb_build_object('startStatus',result->>'httpStatus','startBody',result->'body')::text),
-  extensions.is((result->>'httpStatus')::integer,201,'an explicit start-trip confirmation is accepted') from started;
+select extensions.is((result->>'httpStatus')::integer,201,'an explicit start-trip confirmation is accepted') from started;
 select extensions.ok(public.opentrack_api_dispatch('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111','listTrips',
     jsonb_build_object('path',jsonb_build_object('circleId','44444444-4444-4444-8444-444444444444'),'query','{}'::jsonb),1)->'body'->'data'->0->>'confirmedDrive'='true'
   and exists(select 1 from private.trips where user_id='11111111-1111-4111-8111-111111111111' and status='active'
@@ -207,8 +206,7 @@ with sos as (
   select public.opentrack_api_dispatch('22222222-2222-4222-8222-222222222222','dddddddd-2222-4222-8222-222222222222','acknowledgeSosAlert',
     jsonb_build_object('path',jsonb_build_object('circleId','44444444-4444-4444-8444-444444444444','sosId',(select id::text from sos)),'query','{}'::jsonb),3) result
 )
-select extensions.diag(jsonb_build_object('ackStatus',result->>'httpStatus','ackBody',result->'body')::text),
-  extensions.is((result->>'httpStatus')::integer,200,'an authenticated SOS recipient can acknowledge its alert') from acknowledged;
+select extensions.is((result->>'httpStatus')::integer,200,'an authenticated SOS recipient can acknowledge its alert') from acknowledged;
 select extensions.is((select n.delivery_state from private.notifications n join private.api_records s on s.id=n.sos_id
     where s.resource_type='sos_alert' and s.client_event_id='31313131-3131-4313-8313-313131313131'
       and n.recipient_user_id='22222222-2222-4222-8222-222222222222'),
@@ -239,10 +237,7 @@ with share_list as materialized (
   select t.id,t.started_at from private.guest_shares s join private.trips t on t.id=s.trip_id
   where s.id='55555555-5555-4555-8555-555555555555'
 )
-select extensions.diag((select jsonb_build_object('activeTrip',jsonb_build_object('status',t.status,'sessionMatchesCurrent',
-    t.started_session_id='aaaaaaaa-1111-4111-8111-111111111111','sharingEpoch',t.sharing_epoch))
-    from private.trips t where t.id='51515151-5151-4515-8515-515151515151')::text),
-  extensions.ok(exists(
+select extensions.ok(exists(
   select 1 from share_list, jsonb_array_elements(share_list.data) item(value)
   where item.value->>'id'='20202020-2020-4202-8202-202020202020'
     and item.value->'destination'=jsonb_build_object('latitude',19,'longitude',72,'radiusMeters',150)
@@ -337,11 +332,7 @@ select extensions.is((public.opentrack_share_create('11111111-1111-4111-8111-111
 with created as materialized (
   select public.opentrack_share_create('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111',2,'drive_end',null,null,repeat('9',64),true) as result
 )
-select extensions.diag(jsonb_build_object('httpStatus',result->>'httpStatus','errorCode',result->'body'->'error'->>'code',
-    'responseKeys',(select coalesce(jsonb_agg(k),'[]'::jsonb) from jsonb_object_keys(coalesce(result->'body','{}'::jsonb)) k),
-    'shareId',result->'body'->>'id','tripId',result->'body'->>'tripId','tripStartedAt',result->'body'->>'tripStartedAt',
-    'tripSessionMatchesCurrent',result->'body'->>'tripSessionMatchesCurrent','sharingEpoch',result->'body'->>'sharingEpoch')::text),
-  extensions.ok((result->>'httpStatus')::integer=201
+select extensions.ok((result->>'httpStatus')::integer=201
     and result->'body'->>'tripId' is not null
     and result->'body'->>'tripStartedAt' is not null
     and (result->'body'->>'tripSessionMatchesCurrent')::boolean
@@ -360,19 +351,15 @@ select extensions.ok(not exists(select 1 from private.circle_members where user_
         where item.value->>'id'=(select trip_id::text from private.guest_shares where token_hash=repeat('9',64))),
   'standalone guest drive sharing accepts fixes without Circle sharing consent or Circle recipients');
 with second_share as materialized (
-  select public.opentrack_share_create('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111',2,'drive_end',null,null,repeat('6',64),false) result
+  select public.opentrack_share_create('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111',2,'drive_end',null,null,repeat('5',64),false) result
 )
-select extensions.diag(jsonb_build_object('httpStatus',result->>'httpStatus','errorCode',result->'body'->'error'->>'code',
-    'shareId',result->'body'->>'id','tripId',result->'body'->>'tripId',
-    'linkedTripMatches',coalesce((result->'body'->>'tripId')::uuid=(select first_share.trip_id from private.guest_shares first_share
-      where first_share.token_hash=repeat('9',64)),false))::text),
-  extensions.ok((result->>'httpStatus')::integer=201
+select extensions.ok((result->>'httpStatus')::integer=201
     and coalesce((result->'body'->>'tripId')::uuid=(select first_share.trip_id from private.guest_shares first_share
       where first_share.token_hash=repeat('9',64)),false),
   'additional drive-end shares reuse the same active confirmed trip') from second_share;
 update private.trips set started_at=now()-interval '16 minutes'
   where id=(select trip_id from private.guest_shares where token_hash=repeat('9',64));
-update private.guest_shares set started_at=now()-interval '10 minutes 30 seconds' where token_hash in (repeat('9',64),repeat('6',64));
+update private.guest_shares set started_at=now()-interval '10 minutes 30 seconds' where token_hash in (repeat('9',64),repeat('5',64));
 insert into private.location_samples(sample_id,user_id,session_id,sharing_epoch,captured_at,latitude,longitude,accuracy_meters,speed_mps) values
  ('15151515-1515-4515-8515-151515151499','11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111',2,now()-interval '12 minutes',19,72,10,12),
  ('15151515-1515-4515-8515-151515151500','11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111',2,now()-interval '11 minutes',19.002,72,10,12),
@@ -405,9 +392,7 @@ select public.opentrack_share_event('11111111-1111-4111-8111-111111111111','aaaa
     jsonb_build_object('sampleId','15151515-1515-4515-8515-151515151505','capturedAt',now()-interval '6 minutes','latitude',19.002,'longitude',72,'accuracyMeters',10,'speedMps',0),
     jsonb_build_object('sampleId','15151515-1515-4515-8515-151515151506','capturedAt',now()-interval '5 minutes','latitude',19.002,'longitude',72,'accuracyMeters',10,'speedMps',0)))) result
 )
-select extensions.diag(jsonb_build_object('httpStatus',result->>'httpStatus','eventStatus',result->'body'->>'status',
-    'errorCode',result->'body'->'error'->>'code')::text),
-  extensions.is(result->'body'->>'status','confirmed',
+select extensions.is(result->'body'->>'status','confirmed',
   'drive-end confirmation requires credible movement before the continuous stationary window') from confirmed_event;
 select extensions.ok((select status='ended' and end_reason='drive_end_confirmed' from private.trips where id=(select trip_id from private.guest_shares where token_hash=repeat('9',64)))
     and (select count(*)=2 from private.guest_shares where trip_id=(select trip_id from private.guest_shares where token_hash=repeat('9',64)) and mode='drive_end' and status='ended'),
