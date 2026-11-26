@@ -81,6 +81,7 @@ fun PetProfilesScreen(
 
 data class PetDetailUiState(
     val pet: PetUi,
+    val isOwner: Boolean = false,
     val routines: List<PetRoutineUi> = emptyList(),
     val activity: List<PetActivityUi> = emptyList(),
     val condition: DataCondition = DataCondition.UNKNOWN,
@@ -124,72 +125,76 @@ fun PetDetailScreen(
         MemberCard {
             LabeledValue("Photo", if (pet.photoUrl.isNullOrBlank()) "No photo" else "Photo available")
             pet.photoUrl?.let { PetPhotoImage(it, "${pet.name} photo", Modifier.fillMaxWidth().height(220.dp)) }
-            PrimaryAction("Add or update photo", onOpenPhotoPicker, Modifier.fillMaxWidth())
-            LabeledValue("Recovery card", if (pet.recoveryEnabled) "Enabled" else "Not enabled")
-            if (state.recoveryFields.isNotEmpty()) {
-                LabeledValue("Fields visible to link holders", state.recoveryFields.joinToString())
+            if (state.isOwner) {
+                PrimaryAction("Add or update photo", onOpenPhotoPicker, Modifier.fillMaxWidth())
+                LabeledValue("Recovery card", if (pet.recoveryEnabled) "Enabled" else "Not enabled")
+                if (state.recoveryFields.isNotEmpty()) {
+                    LabeledValue("Fields visible to link holders", state.recoveryFields.joinToString())
+                } else {
+                    Text("No recovery fields are selected. A recovery link should expose only owner-approved fields.")
+                }
+                state.recoveryLinkCreatedAt?.let { LabeledValue("Last link created", it) }
+                Text("Anyone holding an active recovery link can view its approved pet details.")
+                recoveryQrBitmap?.let { qr ->
+                    SectionHeading("Software recovery QR")
+                    Image(qr, contentDescription = "Owner-approved pet recovery QR code", modifier = Modifier.size(220.dp))
+                    Text("Anyone who scans this code can access the pet fields selected above until you revoke the link.")
+                }
+                Text("Choose which fields the software-only recovery card can show.")
+                listOf("petName", "species", "photo", "ownerMessage", "contactRoute").forEach { field ->
+                    FilterChip(
+                        selected = field in state.recoveryFields,
+                        onClick = { onRecoveryFieldSelected(field, field !in state.recoveryFields) },
+                        label = { Text(field) },
+                    )
+                }
+                OutlinedTextField(
+                    value = state.ownerMessage,
+                    onValueChange = onOwnerMessageChange,
+                    label = { Text("Message for a person who finds your pet") },
+                    supportingText = { Text("Shown only when Owner message is selected above; max 500 characters.") },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 4,
+                )
+                OutlinedTextField(
+                    value = state.contactRoute,
+                    onValueChange = onContactRouteChange,
+                    label = { Text("How someone can reach you") },
+                    supportingText = { Text("Shown only when Contact route is selected above; max 200 characters.") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                PrimaryAction(
+                    "Save recovery privacy settings",
+                    { onUpdateRecoverySettings(pet.id, true, state.recoveryFields.toList(), state.ownerMessage.take(500), state.contactRoute.take(200)) },
+                    Modifier.fillMaxWidth(),
+                    state.recoveryFields.isNotEmpty(),
+                )
+                PrimaryAction(
+                    if (pet.recoveryEnabled) "Create or rotate recovery link" else "Enable software recovery link",
+                    { onCreateRecoveryLink(pet.id) },
+                    Modifier.fillMaxWidth(),
+                    pet.recoveryEnabled && state.recoveryFields.isNotEmpty(),
+                )
+                if (pet.recoveryEnabled) {
+                    DestructiveActionButton(
+                        action = DestructiveAction(DestructiveActionKind.REVOKE_PET_RECOVERY_LINK, pet.name),
+                        label = "Revoke recovery link",
+                        onConfirmed = { onRevokeRecoveryLink(pet.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                PrimaryAction("Report ${pet.name} lost", { onCreateLostPetReport(pet.id) }, Modifier.fillMaxWidth())
+                state.activeLostPetReportId?.let { reportId ->
+                    DestructiveActionButton(
+                        action = DestructiveAction(DestructiveActionKind.REVOKE_LOST_PET_REPORT, pet.name),
+                        label = "Revoke lost-pet report",
+                        onConfirmed = { onRevokeLostPetReport(reportId) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             } else {
-                Text("No recovery fields are selected. A recovery link should expose only owner-approved fields.")
-            }
-            state.recoveryLinkCreatedAt?.let { LabeledValue("Last link created", it) }
-            Text("Anyone holding an active recovery link can view its approved pet details.")
-            recoveryQrBitmap?.let { qr ->
-                SectionHeading("Software recovery QR")
-                Image(qr, contentDescription = "Owner-approved pet recovery QR code", modifier = Modifier.size(220.dp))
-                Text("Anyone who scans this code can access the pet fields selected above until you revoke the link.")
-            }
-            Text("Choose which fields the software-only recovery card can show.")
-            listOf("petName", "species", "photo", "ownerMessage", "contactRoute").forEach { field ->
-                FilterChip(
-                    selected = field in state.recoveryFields,
-                    onClick = { onRecoveryFieldSelected(field, field !in state.recoveryFields) },
-                    label = { Text(field) },
-                )
-            }
-            OutlinedTextField(
-                value = state.ownerMessage,
-                onValueChange = onOwnerMessageChange,
-                label = { Text("Message for a person who finds your pet") },
-                supportingText = { Text("Shown only when Owner message is selected above; max 500 characters.") },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 4,
-            )
-            OutlinedTextField(
-                value = state.contactRoute,
-                onValueChange = onContactRouteChange,
-                label = { Text("How someone can reach you") },
-                supportingText = { Text("Shown only when Contact route is selected above; max 200 characters.") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            PrimaryAction(
-                "Save recovery privacy settings",
-                { onUpdateRecoverySettings(pet.id, true, state.recoveryFields.toList(), state.ownerMessage.take(500), state.contactRoute.take(200)) },
-                Modifier.fillMaxWidth(),
-                state.recoveryFields.isNotEmpty(),
-            )
-            PrimaryAction(
-                if (pet.recoveryEnabled) "Create or rotate recovery link" else "Enable software recovery link",
-                { onCreateRecoveryLink(pet.id) },
-                Modifier.fillMaxWidth(),
-                pet.recoveryEnabled && state.recoveryFields.isNotEmpty(),
-            )
-            if (state.recoveryLinkCreatedAt != null) {
-                DestructiveActionButton(
-                    action = DestructiveAction(DestructiveActionKind.REVOKE_PET_RECOVERY_LINK, pet.name),
-                    label = "Revoke recovery link",
-                    onConfirmed = { onRevokeRecoveryLink(pet.id) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            PrimaryAction("Report ${pet.name} lost", { onCreateLostPetReport(pet.id) }, Modifier.fillMaxWidth())
-            state.activeLostPetReportId?.let { reportId ->
-                DestructiveActionButton(
-                    action = DestructiveAction(DestructiveActionKind.REVOKE_LOST_PET_REPORT, pet.name),
-                    label = "Revoke lost-pet report",
-                    onConfirmed = { onRevokeLostPetReport(reportId) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Text("Only the pet owner can change recovery settings or create recovery and lost-pet links.")
             }
         }
         SectionHeading("Care routines")
@@ -227,12 +232,14 @@ fun PetDetailScreen(
                 item.memberLabel?.let { LabeledValue("Member", it) }
             }
         }
-        DestructiveActionButton(
-            action = DestructiveAction(DestructiveActionKind.DELETE_PET_AND_CARE_RECORDS, pet.name),
-            label = "Delete pet profile",
-            onConfirmed = { onDeletePet(pet.id) },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (state.isOwner) {
+            DestructiveActionButton(
+                action = DestructiveAction(DestructiveActionKind.DELETE_PET_AND_CARE_RECORDS, pet.name),
+                label = "Delete pet profile",
+                onConfirmed = { onDeletePet(pet.id) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         androidx.compose.material3.TextButton(onClick = onBack) { Text("Back to pets") }
     }
 }

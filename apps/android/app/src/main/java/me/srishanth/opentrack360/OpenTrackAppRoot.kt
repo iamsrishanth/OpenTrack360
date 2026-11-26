@@ -675,18 +675,26 @@ fun OpenTrackAppRoot(
                     val petPath = "pets/${pet.id.uuidSegment()}"
                     val routines = list("$petPath/routines")
                     val activity = list("$petPath/activity")
-                    val detail = JSONObject()
-                    runCatching { runtime.api.memberGet(petPath) }.onSuccess { detail.put("profile", it.optJSONObject("data") ?: it) }
-                    val profileJson = detail.optJSONObject("profile") ?: JSONObject()
+                    var isOwner = true
+                    val profileJson = try {
+                        val response = runtime.api.memberGet(petPath)
+                        response.optJSONObject("data") ?: response
+                    } catch (error: ApiException) {
+                        if (error.statusCode != 403) throw error
+                        isOwner = false
+                        JSONObject()
+                    }
                     petDetail = PetDetailUiState(
-                        pet = pet.copy(photoUrl = profileJson.optNullableString("photoUrl")),
+                        pet = pet.copy(photoUrl = profileJson.optNullableString("photoUrl") ?: pet.photoUrl),
+                        isOwner = isOwner,
                         routines = buildList { for (index in 0 until routines.length()) routines.optJSONObject(index)?.let { row ->
                             val schedule = row.optNullableString("dueAt")?.let(::formatLocalTime) ?: row.optNullableString("notes") ?: "No reminder time"
                             add(PetRoutineUi(row.optString("id"), row.optString("name", "Care reminder"), "${row.optString("kind", "other").replaceFirstChar(Char::uppercase)} · $schedule", row.optNullableString("lastCompletedAt")?.let(::formatLocalTime)))
                         } },
                         activity = buildList { for (index in 0 until activity.length()) activity.optJSONObject(index)?.let { add(PetActivityUi(it.optString("label", it.optString("kind", "Care update")), it.optString("createdAt", "").let(::formatLocalTime), it.optNullableString("memberDisplayName"))) } },
                         condition = DataCondition.CONFIRMED,
-                        message = "Pet profile, routines and activity are loaded for your account.",
+                        message = if (isOwner) "Your pet profile, recovery settings, routines and activity are loaded."
+                            else "Shared pet profile, routines and activity are loaded. Owner-only recovery settings are hidden.",
                         recoveryFields = (profileJson.optJSONArray("recoveryFields") ?: JSONArray()).let { fields -> (0 until fields.length()).map { fields.optString(it) }.toSet() },
                         ownerMessage = profileJson.optString("ownerMessage", ""),
                         contactRoute = profileJson.optString("contactRoute", ""),
@@ -710,6 +718,7 @@ fun OpenTrackAppRoot(
                 AppPage.PLACES -> placesState = PlacesUiState(condition = DataCondition.ERROR, message = message)
                 AppPage.HISTORY -> historyState = HistoryUiState(condition = DataCondition.ERROR, message = message)
                 AppPage.PETS -> accountMessage = message
+                AppPage.PET_DETAIL -> petDetail = null
                 AppPage.SOS -> sosState = sosState.copy(condition = DataCondition.ERROR, errorMessage = message)
                 else -> accountMessage = message
             }
@@ -1470,7 +1479,7 @@ fun OpenTrackAppRoot(
                                 .onSuccess { petName = ""; petSpecies = ""; petCircles = emptySet(); reloadHome++ }
                                 .onFailure { accountMessage = it.message ?: "Pet profile could not be created." } }
                         },
-                        onOpenPet = { selectedPetId = it; petRecoveryUrl = null; page = AppPage.PET_DETAIL },
+                        onOpenPet = { selectedPetId = it; petDetail = null; petRecoveryUrl = null; page = AppPage.PET_DETAIL },
                     )
                     AppPage.PET_DETAIL -> petDetail?.let { state -> PetDetailScreen(
                         state = state,
