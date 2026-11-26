@@ -5,6 +5,7 @@ These JSON files are deterministic, synthetic examples for Android and web clien
 API base: `https://track.srishanth.me/api/v1`
 
 - Username is normalized server-side; the internal Supabase Auth email is never returned.
+- Every provisioned member starts with `sharingEpoch: 1`, returned by `GET /me`. Include it at the top level of each `POST /locations/batch` request. A stale epoch returns 409 `SHARING_EPOCH_MISMATCH` and accepts no samples; discard that old queued batch. Persist the new epoch returned by `POST /me/stop-sharing` before collecting or uploading again.
 - Member bearer tokens are sent in `Authorization`; refresh tokens are sent in request bodies only to the refresh and logout routes.
 - Guest links use `https://track.srishanth.me/s/{id}#{secret}`. The secret after `#` is read by the client and sent as `Authorization: Bearer <secret>` to `GET /public/shares/{id}`. It is never sent in a query or initial page request.
 - Software-only pet recovery QR links use `https://track.srishanth.me/p/{petId}#{secret}`. The fragment secret is sent only in the `Authorization` header to the public pet recovery routes; the path ID reveals no profile data by itself.
