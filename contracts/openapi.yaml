@@ -593,16 +593,24 @@ paths:
       operationId: listBubbles
       summary: Read active Circle Bubbles without revealing hidden precise positions
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Active approximate Bubble records in this Circle
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BubbleList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Circles]
       operationId: createBubble
       summary: Create a time-limited approximate-location Bubble
       description: Bubble duration is at most six hours. Radius and returned coordinates are approximate. Emergency and member burst events can end it.
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/BubbleCreate' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Bubble created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Bubble' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/bubbles/{bubbleId}:
     parameters:
@@ -724,15 +732,23 @@ paths:
       operationId: listCheckins
       summary: List Circle check-ins under current membership
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Recent check-ins visible to this Circle member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckinList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Coordination]
       operationId: createCheckin
       summary: Create a one-time check-in for selected Circle recipients
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/CheckinCreate' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Check-in created for the addressed Circle
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Checkin' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/quick-notes:
     parameters:
@@ -742,15 +758,23 @@ paths:
       operationId: listQuickNotes
       summary: Read Circle Quick Notes
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Recent Quick Notes visible to this Circle member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuickNoteList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Coordination]
       operationId: createQuickNote
       summary: Send a bounded Quick Note to this Circle
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/QuickNoteCreate' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Quick Note accepted for the addressed Circle
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuickNote' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/events:
     parameters:
@@ -760,15 +784,23 @@ paths:
       operationId: listEvents
       summary: List Circle events and RSVP state
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Events the caller may see, with the caller's RSVP state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Coordination]
       operationId: createEvent
       summary: Create an event for selected Circle members
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/EventCreate' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Event created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/events/{eventId}/rsvp:
     parameters:
@@ -778,9 +810,13 @@ paths:
       tags: [Coordination]
       operationId: updateEventRsvp
       summary: Set or replace the caller's RSVP
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/EventRsvp' }
       responses:
-        '200': { $ref: '#/components/responses/Resource' }
+        '200':
+          description: The caller's RSVP state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRsvpResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/activity-sharing:
     parameters:
@@ -789,9 +825,13 @@ paths:
       tags: [Coordination]
       operationId: setActivitySharing
       summary: Set the caller's activity-sharing consent
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/ActivitySharing' }
       responses:
-        '200': { $ref: '#/components/responses/MutationResult' }
+        '200':
+          description: Updated consent for the caller in this Circle
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActivitySharingResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/activity:
     parameters:
@@ -801,7 +841,11 @@ paths:
       operationId: getCircleActivity
       summary: Read only consented activity state for Circle members
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Activity state for members who currently consent to share it
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CircleActivityList' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/morning-check-ins:
     parameters:
@@ -811,15 +855,23 @@ paths:
       operationId: listMorningCheckIns
       summary: Read morning activity cards for consenting members
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Current morning check-in cards visible to this Circle member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MorningCheckinList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Coordination]
       operationId: createMorningCheckIn
       summary: Send a morning greeting or check-in to this Circle
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/MorningCheckinCreate' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Morning check-in created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MorningCheckin' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/trips:
     parameters:
@@ -851,6 +903,24 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TripSummary' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/trips/{tripId}/stop:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: tripId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Coordination]
+      operationId: stopTrip
+      summary: Stop the caller's active trip in this Circle
+      description: Idempotent by clientRequestId. The server records its own endedAt timestamp; replay cannot reopen or extend a stopped trip.
+      requestBody: { $ref: '#/components/requestBodies/TripStop' }
+      responses:
+        '200':
+          description: Trip ended, including an idempotent replay of the terminal result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripStopResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /circles/{circleId}/driving/reports:
     parameters:
       - { $ref: '#/components/parameters/CircleId' }
@@ -914,28 +984,41 @@ paths:
       operationId: listEmergencyContacts
       summary: List accepted emergency contacts for a Circle
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Accepted emergency contacts only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmergencyContactList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Safety]
       operationId: inviteEmergencyContact
       summary: Invite an emergency contact for explicit acceptance
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/EmergencyContactInvite' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Invitation created for the named provisioned member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmergencyContactInviteResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /emergency-contact-invites/{inviteToken}/accept:
+  /emergency-contact-invites/{inviteId}/accept:
     parameters:
-      - name: inviteToken
+      - name: inviteId
         in: path
         required: true
-        schema: { type: string, minLength: 20 }
+        schema: { type: string, format: uuid }
     post:
       tags: [Safety]
       operationId: acceptEmergencyContactInvite
-      summary: Accept an emergency-contact invitation
+      summary: Accept the caller's pending emergency-contact invitation
+      description: The authenticated account must be the invitee. The invitation ID is not a bearer secret.
       responses:
-        '200': { $ref: '#/components/responses/MutationResult' }
+        '200':
+          description: Invitation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmergencyContactAcceptResult' }
         '404': { $ref: '#/components/responses/NotFound' }
   /circles/{circleId}/sos:
     parameters:
@@ -963,6 +1046,22 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SosResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/sos/{sosId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: sosId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Safety]
+      operationId: getSosAlert
+      summary: Read delivery state for an SOS the caller may access
+      responses:
+        '200':
+          description: Per-recipient in-app delivery and acknowledgement states
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SosResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /circles/{circleId}/sos/{sosId}/cancel:
     parameters:
       - { $ref: '#/components/parameters/CircleId' }
@@ -1035,15 +1134,23 @@ paths:
       operationId: listPetRoutines
       summary: List pet-care routines
       responses:
-        '200': { $ref: '#/components/responses/ResourceList' }
+        '200':
+          description: Routines the caller may see through the pet's shared Circles
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetRoutineList' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Pets]
       operationId: createPetRoutine
       summary: Create a pet-care routine or reminder
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody: { $ref: '#/components/requestBodies/PetRoutineCreate' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Routine created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetRoutine' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /pets/{petId}/activity:
     parameters:
@@ -1104,12 +1211,19 @@ paths:
           description: Secret-bearing recovery link, returned once
           content:
             application/json:
-              schema:
-                type: object
-                required: [url, createdAt]
-                properties:
-                  url: { type: string, format: uri }
-                  createdAt: { type: string, format: date-time }
+              schema: { $ref: '#/components/schemas/PetRecoveryLinkResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Pets]
+      operationId: revokePetRecoveryLink
+      summary: Revoke the current recovery QR secret for this pet
+      description: Invalidates every active recovery token for this pet; the pet profile remains private and can receive a newly rotated QR later.
+      responses:
+        '200':
+          description: Current recovery link revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetRecoveryLinkRevocation' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /pets/{petId}/routines/{routineId}/complete:
     parameters:
@@ -1119,8 +1233,13 @@ paths:
       tags: [Pets]
       operationId: completePetRoutine
       summary: Record a member's completion of a pet-care routine
+      requestBody: { $ref: '#/components/requestBodies/PetRoutineCompletion' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Routine completion recorded, or duplicate-safe replay returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetRoutineCompletionResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /lost-pets:
     post:
@@ -1269,8 +1388,28 @@ paths:
       summary: Provision a member and display a generated temporary password once
       requestBody: { $ref: '#/components/requestBodies/JsonObject' }
       responses:
-        '201': { $ref: '#/components/responses/Resource' }
+        '201':
+          description: Lost-pet report created for the selected Circles
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LostPetReport' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /lost-pets/{reportId}:
+    parameters:
+      - { name: reportId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Pets]
+      operationId: revokeLostPetReport
+      summary: Revoke the caller's active lost-pet report
+      description: Owner-only and idempotent; after revocation the report is no longer visible to recipient Circles.
+      responses:
+        '200':
+          description: Report revoked or already revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LostPetReportRevocation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
   /admin/accounts/{accountId}/reset:
     parameters:
@@ -1350,6 +1489,61 @@ components:
           schema:
             type: object
             additionalProperties: true
+    CheckinCreate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/CheckinCreateRequest' }
+    QuickNoteCreate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/QuickNoteCreateRequest' }
+    EventCreate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EventCreateRequest' }
+    EventRsvp:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EventRsvpRequest' }
+    ActivitySharing:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ActivitySharingRequest' }
+    MorningCheckinCreate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/MorningCheckinCreateRequest' }
+    BubbleCreate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/BubbleCreateRequest' }
+    EmergencyContactInvite:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EmergencyContactInviteRequest' }
+    PetRoutineCreate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PetRoutineCreateRequest' }
+    PetRoutineCompletion:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PetRoutineCompletionRequest' }
+    TripStop:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/TripStopRequest' }
   responses:
     GenericUnauthorized:
       description: Missing, invalid, disabled, expired, or revoked credentials; generic response
@@ -1535,6 +1729,8 @@ components:
         id: { type: string, format: uuid }
         status: { type: string, enum: [active, ended] }
         startedAt: { type: string, format: date-time }
+        endedAt: { type: [string, 'null'], format: date-time }
+        endReason: { type: [string, 'null'], enum: [arrived, cancelled, other, server_confirmed, null] }
         estimatedArrivalAt: { type: [string, 'null'], format: date-time }
         distanceRemainingMeters: { type: [number, 'null'], minimum: 0 }
         destinationLabel: { type: [string, 'null'] }
@@ -1883,6 +2079,356 @@ components:
         circleId: { type: string, format: uuid }
         sharingEnabled: { type: boolean }
         updatedAt: { type: string, format: date-time }
+    CheckinCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, label, latitude, longitude, accuracyMeters, capturedAt]
+      properties:
+        clientEventId: { type: string, format: uuid, description: Idempotency key for one check-in. }
+        label: { type: string, minLength: 1, maxLength: 80 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0, maximum: 10000 }
+        capturedAt: { type: string, format: date-time }
+    Checkin:
+      type: object
+      additionalProperties: false
+      required: [id, circleId, memberId, label, latitude, longitude, accuracyMeters, capturedAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        circleId: { type: string, format: uuid }
+        memberId: { type: string, format: uuid }
+        label: { type: string }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0 }
+        capturedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    CheckinList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Checkin' } }
+        nextCursor: { type: [string, 'null'] }
+    QuickNoteCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, text]
+      properties:
+        clientEventId: { type: string, format: uuid, description: Idempotency key for one Quick Note. }
+        text: { type: string, minLength: 1, maxLength: 280 }
+    QuickNote:
+      type: object
+      additionalProperties: false
+      required: [id, circleId, senderMemberId, text, deliveryState, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        circleId: { type: string, format: uuid }
+        senderMemberId: { type: string, format: uuid }
+        text: { type: string, maxLength: 280 }
+        deliveryState: { type: string, enum: [queued, submitted, received, acknowledged, failed] }
+        createdAt: { type: string, format: date-time }
+    QuickNoteList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/QuickNote' } }
+        nextCursor: { type: [string, 'null'] }
+    EventCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, title, startsAt, inviteeMemberIds]
+      properties:
+        clientEventId: { type: string, format: uuid, description: Idempotency key for event creation. }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: [string, 'null'], format: date-time }
+        notes: { type: [string, 'null'], maxLength: 1000 }
+        inviteeMemberIds: { type: array, minItems: 1, uniqueItems: true, items: { type: string, format: uuid } }
+    Event:
+      type: object
+      additionalProperties: false
+      required: [id, circleId, creatorMemberId, title, startsAt, endsAt, notes, inviteeMemberIds, myRsvp, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        circleId: { type: string, format: uuid }
+        creatorMemberId: { type: string, format: uuid }
+        title: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: [string, 'null'], format: date-time }
+        notes: { type: [string, 'null'] }
+        inviteeMemberIds: { type: array, items: { type: string, format: uuid } }
+        myRsvp: { type: [string, 'null'], enum: [yes, no, maybe, null] }
+        createdAt: { type: string, format: date-time }
+    EventList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Event' } }
+        nextCursor: { type: [string, 'null'] }
+    EventRsvpRequest:
+      type: object
+      additionalProperties: false
+      required: [response]
+      properties:
+        response: { type: string, enum: [yes, no, maybe] }
+    EventRsvpResult:
+      type: object
+      additionalProperties: false
+      required: [eventId, memberId, response, updatedAt]
+      properties:
+        eventId: { type: string, format: uuid }
+        memberId: { type: string, format: uuid }
+        response: { type: string, enum: [yes, no, maybe] }
+        updatedAt: { type: string, format: date-time }
+    ActivitySharingRequest:
+      type: object
+      additionalProperties: false
+      required: [activitySharingEnabled]
+      properties:
+        activitySharingEnabled: { type: boolean }
+    ActivitySharingResult:
+      type: object
+      additionalProperties: false
+      required: [circleId, activitySharingEnabled, updatedAt]
+      properties:
+        circleId: { type: string, format: uuid }
+        activitySharingEnabled: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+    CircleActivityList:
+      type: object
+      additionalProperties: false
+      required: [data, serverTime]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [memberId, activity, observedAt]
+            properties:
+              memberId: { type: string, format: uuid }
+              activity: { type: string, enum: [walking, driving, stationary, unknown] }
+              observedAt: { type: string, format: date-time }
+        serverTime: { type: string, format: date-time }
+    MorningCheckinCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId]
+      properties:
+        clientEventId: { type: string, format: uuid, description: Idempotency key for one morning check-in. }
+        greeting: { type: [string, 'null'], maxLength: 120 }
+    MorningCheckin:
+      type: object
+      additionalProperties: false
+      required: [id, circleId, memberId, greeting, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        circleId: { type: string, format: uuid }
+        memberId: { type: string, format: uuid }
+        greeting: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+    MorningCheckinList:
+      type: object
+      additionalProperties: false
+      required: [data, serverTime]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [memberId, displayName, activityState, lastActivityAt]
+            properties:
+              memberId: { type: string, format: uuid }
+              displayName: { type: string }
+              activityState: { type: string, enum: [active, inactive, unknown] }
+              lastActivityAt: { type: [string, 'null'], format: date-time }
+        serverTime: { type: string, format: date-time }
+    BubbleCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId, latitude, longitude, radiusMeters, durationMinutes]
+      properties:
+        clientEventId: { type: string, format: uuid, description: Idempotency key for this Bubble creation. }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        radiusMeters: { type: integer, minimum: 50, maximum: 10000 }
+        durationMinutes: { type: integer, minimum: 1, maximum: 360 }
+    Bubble:
+      type: object
+      additionalProperties: false
+      required: [id, circleId, creatorMemberId, latitude, longitude, radiusMeters, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        circleId: { type: string, format: uuid }
+        creatorMemberId: { type: string, format: uuid }
+        latitude: { type: number, minimum: -90, maximum: 90, description: Approximate Bubble center; never the hidden precise position. }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        radiusMeters: { type: integer, minimum: 50, maximum: 10000 }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        endedAt: { type: [string, 'null'], format: date-time }
+    BubbleList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Bubble' } }
+        nextCursor: { type: [string, 'null'] }
+    EmergencyContactInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, recipientUsername]
+      properties:
+        clientRequestId: { type: string, format: uuid, description: Idempotency key for this invitation. }
+        recipientUsername: { type: string, minLength: 3, maxLength: 32, description: Existing provisioned account username; no phone or email is required. }
+    EmergencyContactInviteResult:
+      type: object
+      additionalProperties: false
+      required: [id, circleId, recipientMemberId, recipientUsername, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        circleId: { type: string, format: uuid }
+        recipientMemberId: { type: string, format: uuid }
+        recipientUsername: { type: string }
+        status: { type: string, const: pending }
+        createdAt: { type: string, format: date-time }
+    EmergencyContact:
+      type: object
+      additionalProperties: false
+      required: [memberId, username, acceptedAt]
+      properties:
+        memberId: { type: string, format: uuid }
+        username: { type: string }
+        acceptedAt: { type: string, format: date-time }
+    EmergencyContactList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/EmergencyContact' } }
+        nextCursor: { type: [string, 'null'] }
+    EmergencyContactAcceptResult:
+      type: object
+      additionalProperties: false
+      required: [accepted, circleId, memberId, acceptedAt]
+      properties:
+        accepted: { type: boolean, const: true }
+        circleId: { type: string, format: uuid }
+        memberId: { type: string, format: uuid }
+        acceptedAt: { type: string, format: date-time }
+    PetRoutineCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, name, kind]
+      properties:
+        clientRequestId: { type: string, format: uuid, description: Idempotency key for routine creation. }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        kind: { type: string, enum: [feeding, medication, walk, grooming, other] }
+        notes: { type: [string, 'null'], maxLength: 500 }
+        dueAt: { type: [string, 'null'], format: date-time }
+        recurrence:
+          oneOf:
+            - { type: object, additionalProperties: false, required: [frequency, interval], properties: { frequency: { type: string, enum: [daily, weekly] }, interval: { type: integer, minimum: 1, maximum: 52 }, weekdays: { type: array, items: { type: integer, minimum: 1, maximum: 7 } }, localTime: { type: string, pattern: '^([01]?[0-9]|2[0-3]):[0-5][0-9]$' }, timeZone: { type: string, maxLength: 64 } } }
+            - { type: 'null' }
+    PetRoutine:
+      type: object
+      additionalProperties: false
+      required: [id, petId, name, kind, notes, dueAt, recurrence, createdByMemberId, createdAt, active]
+      properties:
+        id: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [feeding, medication, walk, grooming, other] }
+        notes: { type: [string, 'null'] }
+        dueAt: { type: [string, 'null'], format: date-time }
+        recurrence: { type: [object, 'null'], additionalProperties: true }
+        createdByMemberId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        active: { type: boolean }
+    PetRoutineList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/PetRoutine' } }
+        nextCursor: { type: [string, 'null'] }
+    PetRoutineCompletionRequest:
+      type: object
+      additionalProperties: false
+      required: [clientEventId]
+      properties:
+        clientEventId: { type: string, format: uuid, description: Idempotency key for one completion event. }
+    PetRoutineCompletionResult:
+      type: object
+      additionalProperties: false
+      required: [id, routineId, petId, completedByMemberId, clientEventId, completedAt]
+      properties:
+        id: { type: string, format: uuid }
+        routineId: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        completedByMemberId: { type: string, format: uuid }
+        clientEventId: { type: string, format: uuid }
+        completedAt: { type: string, format: date-time }
+    PetRecoveryLinkResult:
+      type: object
+      additionalProperties: false
+      required: [id, url, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid, description: Recovery token identifier; not itself a credential. }
+        url: { type: string, format: uri, description: 'The secret-bearing fragment URL, returned once.' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+    PetRecoveryLinkRevocation:
+      type: object
+      additionalProperties: false
+      required: [revoked, revokedCount, revokedAt]
+      properties:
+        revoked: { type: boolean, const: true }
+        revokedCount: { type: integer, minimum: 0 }
+        revokedAt: { type: string, format: date-time }
+    LostPetReport:
+      type: object
+      additionalProperties: false
+      required: [id, petId, ownerMemberId, recipientCircleIds, message, status, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        ownerMemberId: { type: string, format: uuid }
+        recipientCircleIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+        message: { type: [string, 'null'] }
+        status: { type: string, enum: [active, revoked, expired] }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    LostPetReportRevocation:
+      type: object
+      additionalProperties: false
+      required: [revoked, reportId, endedAt]
+      properties:
+        revoked: { type: boolean, const: true }
+        reportId: { type: string, format: uuid }
+        endedAt: { type: string, format: date-time }
+    TripStopRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, endReason]
+      properties:
+        clientRequestId: { type: string, format: uuid, description: Idempotency key for this terminal command. }
+        endReason: { type: string, enum: [arrived, cancelled, other] }
+    TripStopResult:
+      type: object
+      additionalProperties: false
+      required: [id, status, startedAt, endedAt, endReason]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, const: ended }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        endReason: { type: string, enum: [arrived, cancelled, other, server_confirmed] }
     ApiError:
       type: object
       required: [error]

@@ -1,12 +1,12 @@
 {
-  "id": "a55e5d24-92b7-4b14-9763-66a94ee721e5",
-  "status": "submitted",
+  "id": "aa5a8682-8275-4b3a-8b20-f0c51e0ff413",
+  "status": "queued",
   "recipients": [
     {
       "recipientId": "d1a97680-faa9-4f37-8d8f-59841456c981",
-      "state": "submitted"
+      "state": "queued"
     }
   ],
-  "createdAt": "2026-11-26T10:00:05Z",
-  "providerMessageId": "fixture-provider-message-id"
+  "createdAt": "2026-11-26T10:26:00Z",
+  "providerMessageId": null
 }

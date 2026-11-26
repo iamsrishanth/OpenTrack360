@@ -1,0 +1,10 @@
+{
+  "id": "77f7a664-2fb0-4e20-8774-0400bcb678da",
+  "petId": "737fc4af-7735-46d6-98f4-0ee6db2cbb52",
+  "ownerMemberId": "1bcb3a8e-0d22-4b0a-a910-510fd4547f61",
+  "recipientCircleIds": ["fcac8f75-31c3-4866-bfb6-733f43b0fd90"],
+  "message": "Milo is missing near the park. Please contact me through OpenTrack360.",
+  "status": "active",
+  "createdAt": "2026-11-26T10:30:00Z",
+  "expiresAt": "2026-11-27T10:30:00Z"
+}
