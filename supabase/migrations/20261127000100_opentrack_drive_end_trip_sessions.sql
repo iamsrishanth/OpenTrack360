@@ -91,7 +91,7 @@ begin
       return jsonb_build_object('httpStatus',409,'body',jsonb_build_object('error',jsonb_build_object('code','confirmed_drive_required','message','Start and confirm a drive before creating a drive-end share')));
     end if;
   end if;
-  v_end_condition := case p_mode when 'time' then 'Until selected expiry' when 'destination' then 'After confirmed arrival at destination' else 'After confirmed drive end' end;
+  v_end_condition := case p_mode when 'time' then 'Until selected expiry' when 'destination' then 'After confirmed arrival at destination' else 'When a confirmed drive has five continuous minutes of credible stationary evidence' end;
   insert into private.guest_shares(owner_id,token_hash,mode,sharing_epoch,created_at,started_at,expires_at,
     destination_latitude,destination_longitude,destination_radius_meters,trip_id)
   values(p_user_id,p_secret_hash,p_mode,p_sharing_epoch,v_now,v_now,case when p_mode='time' then p_expires_at end,

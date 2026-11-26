@@ -2330,7 +2330,7 @@ components:
         startedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: [string, 'null'], format: date-time }
-        endCondition: { type: string }
+        endCondition: { type: string, description: Human-readable terminal condition; drive_end states the five continuous minutes of credible stationary evidence required after confirmed driving. }
         tripId: { type: [string, 'null'], format: uuid, description: Sender-only identifier of the exact trip linked to a drive_end share; null for other modes. }
         tripStartedAt: { type: [string, 'null'], format: date-time, description: Sender-only start time of the exact confirmed trip linked to a drive_end share; null for other modes. }
         tripSessionMatchesCurrent: { type: [boolean, 'null'], description: Sender-only signal that the linked trip is still active and its original session and sharing epoch match this authenticated session; null for other modes. }
@@ -2404,7 +2404,7 @@ components:
                       longitude: { type: number, minimum: -180, maximum: 180 }
                       radiusMeters: { type: integer, minimum: 50, maximum: 1000 }
                   - type: 'null'
-              endCondition: { type: string }
+              endCondition: { type: string, description: Human-readable terminal condition; drive_end states the five continuous minutes of credible stationary evidence required after confirmed driving. }
         nextCursor: { type: [string, 'null'] }
       description: Sender-only response. Destination data lets the owner resume local arrival monitoring after restart. For drive_end, tripId and tripStartedAt identify the exact linked trip; tripSessionMatchesCurrent and sharingEpoch let the owner decide whether local evidence can resume. Moving evidence may predate share creation only when tripSessionMatchesCurrent is true and the sample is at or after tripStartedAt. Stationary evidence and destination evidence remain post-share-start. These fields are never returned to the guest. No field contains the share secret, its digest, or a complete share URL.
     PublicFix:

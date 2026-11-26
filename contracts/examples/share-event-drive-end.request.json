@@ -1,0 +1,71 @@
+{
+  "clientEventId": "d0d0d0d0-1111-4111-8111-d0d0d0d0d0d0",
+  "eventType": "drive_end",
+  "observedAt": "2026-11-26T10:05:10Z",
+  "evidenceFixes": [
+    {
+      "sampleId": "d1d1d1d1-1111-4111-8111-d1d1d1d1d1d1",
+      "capturedAt": "2026-11-26T09:50:00Z",
+      "latitude": 19.076,
+      "longitude": 72.877,
+      "accuracyMeters": 12,
+      "speedMps": 9.2
+    },
+    {
+      "sampleId": "d2d2d2d2-1111-4111-8111-d2d2d2d2d2d2",
+      "capturedAt": "2026-11-26T09:51:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 9.2
+    },
+    {
+      "sampleId": "d3d3d3d3-1111-4111-8111-d3d3d3d3d3d3",
+      "capturedAt": "2026-11-26T10:00:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    },
+    {
+      "sampleId": "d4d4d4d4-1111-4111-8111-d4d4d4d4d4d4",
+      "capturedAt": "2026-11-26T10:01:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    },
+    {
+      "sampleId": "d5d5d5d5-1111-4111-8111-d5d5d5d5d5d5",
+      "capturedAt": "2026-11-26T10:02:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    },
+    {
+      "sampleId": "d6d6d6d6-1111-4111-8111-d6d6d6d6d6d6",
+      "capturedAt": "2026-11-26T10:03:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    },
+    {
+      "sampleId": "d7d7d7d7-1111-4111-8111-d7d7d7d7d7d7",
+      "capturedAt": "2026-11-26T10:04:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    },
+    {
+      "sampleId": "d8d8d8d8-1111-4111-8111-d8d8d8d8d8d8",
+      "capturedAt": "2026-11-26T10:05:00Z",
+      "latitude": 19.081,
+      "longitude": 72.877,
+      "accuracyMeters": 10,
+      "speedMps": 0
+    }
+  ]
+}

@@ -247,6 +247,7 @@ select extensions.ok(exists(
     where item.value->>'id'='55555555-5555-4555-8555-555555555555'
       and (item.value->>'tripId')::uuid=linked_trip.id
       and (item.value->>'tripStartedAt')::timestamptz=linked_trip.started_at
+      and item.value->>'endCondition'='When a confirmed drive has five continuous minutes of credible stationary evidence'
       and (item.value->>'tripSessionMatchesCurrent')::boolean
       and (item.value->>'sharingEpoch')::bigint=1
       and not (item.value ? 'url') and not (item.value ? 'secret') and not (item.value ? 'sessionId')),
@@ -335,6 +336,7 @@ with created as materialized (
 select extensions.ok((result->>'httpStatus')::integer=201
     and result->'body'->>'tripId' is not null
     and result->'body'->>'tripStartedAt' is not null
+    and result->'body'->>'endCondition'='When a confirmed drive has five continuous minutes of credible stationary evidence'
     and (result->'body'->>'tripSessionMatchesCurrent')::boolean
     and (result->'body'->>'sharingEpoch')::bigint=2,
   'explicit drive confirmation returns the exact trip/session/epoch binding for a guest-only share') from created;
