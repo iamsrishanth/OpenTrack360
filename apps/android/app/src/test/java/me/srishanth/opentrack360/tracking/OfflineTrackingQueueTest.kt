@@ -27,8 +27,12 @@ class OfflineTrackingQueueTest {
         assertNull(queue.enqueueSample(scope, after, at(40)))
         coordinator.flush(scope, hasLocationPermission = true, consentEnabled = true)
 
-        assertEquals(listOf("fix:${before.sampleId}", "event:${evidence.clientEventId}", "fix:${after.sampleId}"), transport.calls)
-        assertEquals(listOf(scope.sharingEpoch, scope.sharingEpoch), transport.batchEpochs)
+        val canonicalEvidenceBatch = evidence.evidenceFixes.joinToString(prefix = "fix:", separator = ",") { it.sampleId }
+        assertEquals(
+            listOf("fix:${before.sampleId}", canonicalEvidenceBatch, "event:${evidence.clientEventId}", "fix:${after.sampleId}"),
+            transport.calls,
+        )
+        assertEquals(listOf(scope.sharingEpoch, scope.sharingEpoch, scope.sharingEpoch), transport.batchEpochs)
     }
 
     @Test
@@ -76,7 +80,7 @@ class OfflineTrackingQueueTest {
         assertEquals(FlushStopReason.EVENT_PENDING, pendingResult.stopReason)
         assertEquals(1, firstQueue.pendingEventCount())
         assertEquals(1, firstQueue.pendingSampleCount())
-        assertEquals(listOf("event:${event.clientEventId}"), transport.calls)
+        assertEquals(listOf("fix:${event.evidenceFixes.single().sampleId}", "event:${event.clientEventId}"), transport.calls)
 
         // Recreate both the queue and coordinator to prove the event id and barrier are durable.
         val restoredQueue = OfflineTrackingQueue(storage, cipher)
@@ -86,11 +90,84 @@ class OfflineTrackingQueueTest {
         assertEquals(1, confirmedResult.eventsSent)
         assertEquals(1, confirmedResult.fixesSent)
         assertEquals(
-            listOf("event:${event.clientEventId}", "event:${event.clientEventId}", "fix:${laterFix.sampleId}"),
+            listOf(
+                "fix:${event.evidenceFixes.single().sampleId}",
+                "event:${event.clientEventId}",
+                "fix:${event.evidenceFixes.single().sampleId}",
+                "event:${event.clientEventId}",
+                "fix:${laterFix.sampleId}",
+            ),
             transport.calls,
         )
         assertEquals(0, restoredQueue.pendingEventCount())
         assertEquals(0, restoredQueue.pendingSampleCount())
+    }
+
+    @Test
+    fun rejectedCanonicalEvidenceKeepsEventBarrierAndDoesNotSubmitEvent() = runBlocking {
+        val queue = queue()
+        val event = event(1)
+        val laterFix = sample(2)
+        val transport = object : RecordingTransport() {
+            override suspend fun postLocationsBatch(sharingEpoch: Long, samples: List<LocationSample>): LocationBatchResult {
+                calls += samples.joinToString(prefix = "fix:", separator = ",") { it.sampleId }
+                return LocationBatchResult(
+                    serverTime = SERVER_TIME,
+                    accepted = emptySet(),
+                    duplicates = emptySet(),
+                    rejected = samples.associate { it.sampleId to "invalid_sample" },
+                )
+            }
+        }
+        assertTrue(queue.enqueueShareEvent(scope, SHARE_ID, event, at(40)))
+        assertNull(queue.enqueueSample(scope, laterFix, at(40)))
+
+        val result = TrackingSyncCoordinator(queue, transport, now = { at(40) })
+            .flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        assertEquals(FlushStopReason.EVENT_EVIDENCE_REJECTED, result.stopReason)
+        assertEquals(listOf("fix:${event.evidenceFixes.single().sampleId}"), transport.calls)
+        assertEquals(1, queue.pendingEventCount())
+        assertEquals(1, queue.pendingSampleCount())
+    }
+
+    @Test
+    fun previouslyUploadedEvidenceIsAcceptedAsDuplicateBeforeEventSubmission() = runBlocking {
+        val queue = queue()
+        val event = event(1)
+        val evidenceSample = event.evidenceFixes.single()
+        val laterFix = sample(2)
+        var locationCalls = 0
+        val transport = object : RecordingTransport() {
+            override suspend fun postLocationsBatch(sharingEpoch: Long, samples: List<LocationSample>): LocationBatchResult {
+                locationCalls++
+                calls += samples.joinToString(prefix = "fix:", separator = ",") { it.sampleId }
+                val ids = samples.map { it.sampleId }.toSet()
+                return LocationBatchResult(
+                    serverTime = SERVER_TIME,
+                    accepted = if (locationCalls == 1) ids else emptySet(),
+                    duplicates = if (locationCalls == 1) emptySet() else ids,
+                    rejected = emptyMap(),
+                )
+            }
+        }
+        assertNull(queue.enqueueSample(scope, evidenceSample, at(40)))
+        assertTrue(queue.enqueueShareEvent(scope, SHARE_ID, event, at(40)))
+        assertNull(queue.enqueueSample(scope, laterFix, at(40)))
+
+        val result = TrackingSyncCoordinator(queue, transport, now = { at(40) })
+            .flush(scope, hasLocationPermission = true, consentEnabled = true)
+
+        assertEquals(1, result.eventsSent)
+        assertEquals(
+            listOf(
+                "fix:${evidenceSample.sampleId}",
+                "fix:${evidenceSample.sampleId}",
+                "event:${event.clientEventId}",
+                "fix:${laterFix.sampleId}",
+            ),
+            transport.calls,
+        )
     }
 
     @Test
@@ -127,7 +204,10 @@ class OfflineTrackingQueueTest {
 
         assertEquals(1, result.eventsSent)
         assertEquals(1, result.fixesSent)
-        assertEquals(listOf("event:${event.clientEventId}", "fix:${laterFix.sampleId}"), calls)
+        assertEquals(
+            listOf("fix:${event.evidenceFixes.single().sampleId}", "event:${event.clientEventId}", "fix:${laterFix.sampleId}"),
+            calls,
+        )
     }
 
     @Test
@@ -155,7 +235,10 @@ class OfflineTrackingQueueTest {
 
         assertEquals(1, result.eventsSent)
         assertEquals(1, result.fixesSent)
-        assertEquals(listOf("event:${event.clientEventId}", "fix:${laterFix.sampleId}"), calls)
+        assertEquals(
+            listOf("fix:${event.evidenceFixes.single().sampleId}", "event:${event.clientEventId}", "fix:${laterFix.sampleId}"),
+            calls,
+        )
         assertEquals(0, queue.pendingEventCount())
         assertEquals(0, queue.pendingSampleCount())
     }

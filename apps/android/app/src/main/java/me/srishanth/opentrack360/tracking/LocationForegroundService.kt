@@ -387,8 +387,9 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             }
         }
         driveUpdate?.let(installed.onDriveUpdate)
-        // Persist any terminal event detected by this fix before appending the fix itself. All
-        // subsequent fixes will then remain behind that event until the server resolves it.
+        // Keep this terminal fix and all later fixes behind the event. The sync coordinator first
+        // uploads the event's evidence samples idempotently, then submits the event, so every
+        // evidence ID is canonical before the server evaluates the terminal condition.
         val rejection = sync?.enqueueFix(scope, sample)
         if (rejection != null) return
         val drivingNow = engine.isDriveActive

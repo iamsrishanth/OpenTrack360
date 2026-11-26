@@ -74,6 +74,7 @@ enum class FlushStopReason {
     SHARING_EPOCH_MISMATCH,
     SERVER_OMITTED_RESULT,
     EVENT_PENDING,
+    EVENT_EVIDENCE_REJECTED,
     COMPLETE,
 }
 
@@ -481,6 +482,22 @@ class TrackingSyncCoordinator(
                         return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.NO_AUTHORITY)
                     }
                     try {
+                        // The API requires every evidence sample to exist as a matching canonical
+                        // location fix before it accepts an event. Re-submit these idempotency
+                        // keys first so this also works when the original fix batch was offline,
+                        // rejected, or the event's final fix was queued behind the event barrier.
+                        val evidenceIds = first.event.evidenceFixes.map { it.sampleId }.toSet()
+                        val evidenceResult = transport.postLocationsBatch(scope.sharingEpoch, first.event.evidenceFixes)
+                        val canonicalEvidenceIds = evidenceResult.accepted + evidenceResult.duplicates
+                        if (!canonicalEvidenceIds.containsAll(evidenceIds)) {
+                            val reason = if (evidenceIds.any(evidenceResult.rejected::containsKey)) {
+                                FlushStopReason.EVENT_EVIDENCE_REJECTED
+                            } else {
+                                FlushStopReason.SERVER_OMITTED_RESULT
+                            }
+                            return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, reason)
+                        }
+
                         val result = transport.postShareEvent(first.shareId, first.event)
                         if (result.clientEventId != first.event.clientEventId) {
                             return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.SERVER_OMITTED_RESULT)
@@ -494,6 +511,10 @@ class TrackingSyncCoordinator(
                     } catch (_: ShareAlreadyEndedException) {
                         queue.removeEvent(scope.userId, first.event.clientEventId)
                         sentEvents++
+                    } catch (mismatch: SharingEpochMismatchException) {
+                        queue.invalidatePrivateRecords()
+                        mismatch.currentSharingEpoch?.let { epoch -> onSharingEpoch(scope.userId, epoch) }
+                        return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.SHARING_EPOCH_MISMATCH)
                     } catch (_: Exception) {
                         return FlushSummary(sentFixes, sentEvents, sentStops, staleDropped, FlushStopReason.TRANSPORT_ERROR)
                     }
