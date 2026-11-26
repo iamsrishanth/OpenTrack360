@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "SHARING_EPOCH_MISMATCH",
+    "message": "Refresh the member profile and discard queued samples from an older sharing epoch.",
+    "requestId": "2c5a9f68-9bf3-45e3-8e0a-9f7efc9365a4"
+  }
+}

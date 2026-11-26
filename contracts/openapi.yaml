@@ -123,10 +123,11 @@ paths:
     get:
       tags: [Member]
       operationId: getCurrentMember
-      summary: Read the caller's own public profile
+      summary: Read the caller's profile and current sharing epoch
+      description: The initial sharingEpoch is 1. After a successful account-wide stop, the client must persist the returned epoch and use it for newly captured samples.
       responses:
         '200':
-          description: Current member profile
+          description: Current member profile and account-wide sharing epoch
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MemberProfile' }
@@ -171,7 +172,9 @@ paths:
       description: >-
         Idempotently advances the member sharing epoch, disables Circle sharing,
         ends active trips and revokes all active guest links in one server-side
-        transaction. Android stops collection immediately and persists this
+        transaction. The initial epoch is 1. Replaying the same clientRequestId
+        returns the original result and epoch without incrementing again.
+        Android stops collection immediately and persists this
         idempotent command while offline; on reconnect it sends this command
         before any queued data. The server rejects queued fixes from older
         sharing epochs. A client must not upload old queued fixes after a stop.
@@ -207,7 +210,10 @@ paths:
       description: >-
         Maximum 100 samples per request. sampleId is an idempotency key. Samples
         are validated for coordinate bounds, accuracy, clock skew and per-user
-        ordering. The server derives the owner from the session; callers cannot
+        ordering. Each request carries the current sharingEpoch from GET /me;
+        mismatch rejects the entire batch with 409 and accepts no samples. The
+        server rechecks the epoch transactionally to close a concurrent-stop
+        race. The server derives the owner from the session; callers cannot
         choose another member. Samples older than a share's startedAt are never
         released through that share. A terminal share rejects samples captured
         after its accepted ending event.
@@ -219,6 +225,7 @@ paths:
             examples:
               syntheticRoute:
                 value:
+                  sharingEpoch: 1
                   samples:
                     - sampleId: 10c0f632-7ad5-4d4e-8ae4-f72e98e9678c
                       capturedAt: '2026-11-26T10:00:00Z'
@@ -236,6 +243,18 @@ paths:
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
         '428': { $ref: '#/components/responses/PasswordRotationRequired' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '409':
+          description: The supplied sharingEpoch is no longer current; no sample in the batch is accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+              examples:
+                epochMismatch:
+                  value:
+                    error:
+                      code: SHARING_EPOCH_MISMATCH
+                      message: Refresh the member profile and discard queued samples from an older sharing epoch.
+                      requestId: 2c5a9f68-9bf3-45e3-8e0a-9f7efc9365a4
   /shares:
     get:
       tags: [Shares]
@@ -1556,12 +1575,13 @@ components:
             mustRotatePassword: { type: boolean }
     MemberProfile:
       type: object
-      required: [id, username, mustRotatePassword]
+      required: [id, username, mustRotatePassword, sharingEpoch]
       properties:
         id: { type: string, format: uuid }
         username: { type: string }
         displayName: { type: [string, 'null'] }
         mustRotatePassword: { type: boolean }
+        sharingEpoch: { type: integer, minimum: 1, description: Account-wide epoch for location uploads; starts at 1 and advances atomically on stop-sharing. }
     LocationSample:
       type: object
       additionalProperties: false
@@ -1576,8 +1596,9 @@ components:
     LocationBatchRequest:
       type: object
       additionalProperties: false
-      required: [samples]
+      required: [sharingEpoch, samples]
       properties:
+        sharingEpoch: { type: integer, minimum: 1, description: Must match the current value returned by GET /me. A mismatch rejects the entire batch. }
         samples:
           type: array
           minItems: 1
