@@ -520,6 +520,7 @@ fun NotificationInboxScreen(
 data class TripProgressUiState(
     val active: Boolean = false,
     val tripId: String? = null,
+    val confirmedDriving: Boolean = false,
     val condition: DataCondition = DataCondition.UNKNOWN,
     val message: String = "Trip progress has not loaded.",
     val destinationLabel: String? = null,
@@ -536,13 +537,15 @@ fun TripProgressScreen(
     selectedRecipientIds: Set<String>,
     availableRecipients: List<AudienceChoiceUi>,
     shareLockScreenProgress: Boolean,
+    confirmDriving: Boolean,
     mapContent: @Composable () -> Unit,
     onDestinationChange: (String) -> Unit,
     onDestinationLatitudeChange: (String) -> Unit,
     onDestinationLongitudeChange: (String) -> Unit,
     onRecipientSelected: (memberId: String, selected: Boolean) -> Unit,
     onShareLockScreenProgressChange: (Boolean) -> Unit,
-    onStartTrip: (destinationLabel: String?, latitude: Double?, longitude: Double?, recipientIds: List<String>, shareLockScreenProgress: Boolean) -> Unit,
+    onConfirmDrivingChange: (Boolean) -> Unit,
+    onStartTrip: (destinationLabel: String?, latitude: Double?, longitude: Double?, recipientIds: List<String>, shareLockScreenProgress: Boolean, confirmedDriving: Boolean) -> Unit,
     onStopTrip: (tripId: String, endReason: String) -> Unit = { _, _ -> },
 ) {
     val latitude = destinationLatitude.toDoubleOrNull()
@@ -555,6 +558,7 @@ fun TripProgressScreen(
         if (state.active) {
             MemberCard {
                 state.destinationLabel?.let { LabeledValue("Destination", it) }
+                LabeledValue("Driver confirmation", if (state.confirmedDriving) "You confirmed you are driving" else "Not confirmed")
                 state.etaLabel?.let { LabeledValue("Estimated arrival", it) }
                 state.distanceRemainingMeters?.let { LabeledValue("Distance remaining", "${it / 1000.0} km") }
                 Text("ETA is an estimate and may be unavailable when trip data is stale.")
@@ -580,6 +584,13 @@ fun TripProgressScreen(
                     )
                 }
                 androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("I confirm I am driving")
+                        Text("Leave this off when you are a passenger. The server will not infer a driver from speed.")
+                    }
+                    Switch(checked = confirmDriving, onCheckedChange = onConfirmDrivingChange)
+                }
+                androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Text("Show progress on the lock screen", modifier = Modifier.weight(1f))
                     Switch(checked = shareLockScreenProgress, onCheckedChange = onShareLockScreenProgressChange)
                 }
@@ -595,6 +606,7 @@ fun TripProgressScreen(
                             longitude,
                             selectedRecipientIds.toList(),
                             shareLockScreenProgress,
+                            confirmDriving,
                         )
                     },
                     modifier = Modifier.fillMaxWidth(),

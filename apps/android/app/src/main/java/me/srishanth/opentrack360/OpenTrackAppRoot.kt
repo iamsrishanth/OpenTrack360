@@ -1,6 +1,8 @@
 package me.srishanth.opentrack360
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -188,6 +190,8 @@ fun OpenTrackAppRoot(
     var pendingStartAfterConsent by remember { mutableStateOf(false) }
     var permissionSummary by remember { mutableStateOf<String?>(null) }
     var circleManagementState by remember { mutableStateOf<CircleManagementUiState?>(null) }
+    var pendingCircleInviteUrl by remember { mutableStateOf<String?>(null) }
+    var pendingCircleInviteCircleId by remember { mutableStateOf<String?>(null) }
     var selectedPlaceId by remember { mutableStateOf<String?>(null) }
     var selectedRuleId by remember { mutableStateOf<String?>(null) }
     var editingPlace by remember { mutableStateOf(false) }
@@ -221,6 +225,7 @@ fun OpenTrackAppRoot(
     var tripLongitude by remember { mutableStateOf("") }
     var tripRecipients by remember { mutableStateOf<Set<String>>(emptySet()) }
     var tripLockScreen by remember { mutableStateOf(false) }
+    var confirmDriving by remember { mutableStateOf(false) }
     var morningItems by remember { mutableStateOf<List<MorningCheckInUi>>(emptyList()) }
     var morningGreeting by remember { mutableStateOf("") }
     var selectedCheckinRecipients by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -356,17 +361,44 @@ fun OpenTrackAppRoot(
                 require(CircleInviteLinkParser.parse(url) != null) { "The API returned an invalid invitation link." }
                 invite.optNullableString("expiresAt")?.let(::formatLocalTime) to url
             }.onSuccess { (expiresAt, url) ->
+                pendingCircleInviteUrl = url
+                pendingCircleInviteCircleId = validCircleId
                 circleManagementState = circleManagementState?.copy(
                     inviteStatus = "Invitation ready. It expires ${expiresAt ?: "within 72 hours"}; anyone with the link can join once.",
                     errorMessage = null,
                 )
-                shareText(activity, url)
+                runCatching { shareText(activity, url) }.onFailure {
+                    circleManagementState = circleManagementState?.copy(
+                        inviteStatus = "Invitation created. The share sheet could not open; copy the link from this screen.",
+                    )
+                }
             }.onFailure { error ->
                 circleManagementState = circleManagementState?.copy(
                     inviteStatus = null,
                     errorMessage = error.message ?: "Invitation link could not be created.",
                 )
             }
+        }
+    }
+
+    fun copyCircleInvite(circleId: String) {
+        val url = pendingCircleInviteUrl?.takeIf { pendingCircleInviteCircleId == circleId } ?: return
+        val clipboard = activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clipboard == null) {
+            circleManagementState = circleManagementState?.copy(errorMessage = "The invitation link could not be copied.")
+            return
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("OpenTrack360 Circle invitation", url))
+        circleManagementState = circleManagementState?.copy(
+            inviteStatus = "Invitation copied. Anyone holding it can join this Circle once before it expires.",
+            errorMessage = null,
+        )
+    }
+
+    fun reshareCircleInvite(circleId: String) {
+        val url = pendingCircleInviteUrl?.takeIf { pendingCircleInviteCircleId == circleId } ?: return
+        runCatching { shareText(activity, url) }.onFailure {
+            circleManagementState = circleManagementState?.copy(errorMessage = "The Android share sheet could not be opened. You can copy the invitation link instead.")
         }
     }
 
@@ -391,6 +423,13 @@ fun OpenTrackAppRoot(
             }
         }
         booting = false
+    }
+
+    LaunchedEffect(session?.memberId) {
+        if (session == null) {
+            pendingCircleInviteUrl = null
+            pendingCircleInviteCircleId = null
+        }
     }
 
     LaunchedEffect(reloadHome, session?.memberId) {
@@ -626,6 +665,7 @@ fun OpenTrackAppRoot(
                     tripState = if (active == null) TripProgressUiState(condition = DataCondition.CONFIRMED, message = "No active trip is shared with this Circle.") else TripProgressUiState(
                         active = true,
                         tripId = active.optString("id").takeIf(String::isNotBlank),
+                        confirmedDriving = active.optBoolean("confirmedDrive", tripState.confirmedDriving && active.optString("id") == tripState.tripId),
                         condition = DataCondition.CONFIRMED,
                         message = "Trip progress is available to its selected Circle recipients.",
                         destinationLabel = active.optNullableString("destinationLabel"),
@@ -1114,7 +1154,10 @@ fun OpenTrackAppRoot(
                         if (state == null) MemberScreen("Manage Circle", "Loading members…") {}
                         else CircleManagementScreen(
                             state = state,
+                            inviteLinkAvailable = pendingCircleInviteCircleId == state.circleId && pendingCircleInviteUrl != null,
                             onCreateInvite = { circleId -> createCircleInvite(circleId) },
+                            onCopyInvite = { copyCircleInvite(state.circleId) },
+                            onShareInvite = { reshareCircleInvite(state.circleId) },
                             onUpdateMember = { id, memberId, field, value ->
                                 val currentMemberId = session?.memberId ?: return@CircleManagementScreen
                                 val allowedValue = when (field) {
@@ -1387,6 +1430,7 @@ fun OpenTrackAppRoot(
                         selectedRecipientIds = tripRecipients,
                         availableRecipients = circleState.members.map { AudienceChoiceUi(it.id, it.displayName, it.id in tripRecipients) },
                         shareLockScreenProgress = tripLockScreen,
+                        confirmDriving = confirmDriving,
                         mapContent = {
                             val markers = circleState.members.mapNotNull { member -> member.location?.let { MapMarker(GeoPoint(it.latitude, it.longitude), stale = false) } }
                             OpenTrackMapSurface(Modifier.fillMaxSize(), markers = markers)
@@ -1394,18 +1438,32 @@ fun OpenTrackAppRoot(
                         onDestinationChange = { tripDestination = it }, onDestinationLatitudeChange = { tripLatitude = it }, onDestinationLongitudeChange = { tripLongitude = it },
                         onRecipientSelected = { id, selected -> tripRecipients = if (selected) tripRecipients + id else tripRecipients - id },
                         onShareLockScreenProgressChange = { tripLockScreen = it },
-                        onStartTrip = { label, latitude, longitude, ids, lockScreen ->
+                        onConfirmDrivingChange = { confirmDriving = it },
+                        onStartTrip = { label, latitude, longitude, ids, lockScreen, memberConfirmedDriving ->
                             val circleId = selectedCircleId ?: return@TripProgressScreen
                             scope.launch {
                                 runCatching {
-                                    runtime.api.memberPost("circles/${circleId.uuidSegment()}/trips", JSONObject()
+                                    val request = JSONObject()
                                         .put("recipientMemberIds", JSONArray(ids))
                                         .put("destinationLabel", label ?: JSONObject.NULL)
                                         .put("destinationLatitude", latitude ?: JSONObject.NULL)
                                         .put("destinationLongitude", longitude ?: JSONObject.NULL)
-                                        .put("shareLockScreenProgress", lockScreen))
-                                }.onSuccess {
-                                    tripState = tripState.copy(active = true, condition = DataCondition.CONFIRMED, message = "Trip started. To end all location sharing, use Stop all sharing on the Circles page; a per-trip stop route is not yet defined.", destinationLabel = label)
+                                        .put("shareLockScreenProgress", lockScreen)
+                                    if (memberConfirmedDriving) request.put("confirmedDrive", true)
+                                    val response = runtime.api.memberPost("circles/${circleId.uuidSegment()}/trips", request)
+                                    val result = response.optJSONObject("data") ?: response
+                                    java.util.UUID.fromString(result.getString("id")).toString()
+                                }.onSuccess { tripId ->
+                                    tripState = tripState.copy(
+                                        active = true,
+                                        tripId = tripId,
+                                        confirmedDriving = memberConfirmedDriving,
+                                        condition = DataCondition.CONFIRMED,
+                                        message = if (memberConfirmedDriving) "Trip started. You confirmed you are driving; use End this trip to stop progress."
+                                            else "Trip started. Use End this trip to stop progress. Circle sharing and guest links stay active until you pause or revoke them.",
+                                        destinationLabel = label,
+                                    )
+                                    confirmDriving = false
                                     if (!trackingStatus.isActiveTrackingStatus()) {
                                         runtime.setSharingConsent(session!!.memberId, true)
                                         val permission = AndroidPermissionProbe.snapshot(activity)
@@ -1429,7 +1487,11 @@ fun OpenTrackAppRoot(
                             scope.launch { runCatching { runtime.api.memberPost("circles/${circleId.uuidSegment()}/trips/${id.uuidSegment()}/stop", JSONObject()
                                 .put("clientRequestId", java.util.UUID.randomUUID().toString())
                                 .put("endReason", reason)) }
-                                .onSuccess { tripState = tripState.copy(active = false, tripId = null, condition = DataCondition.CONFIRMED, message = "This trip has ended. Circle sharing and guest links remain active.") }
+                                .onSuccess {
+                                    tripState = tripState.copy(active = false, tripId = null, confirmedDriving = false, condition = DataCondition.CONFIRMED, message = "This trip has ended. Circle sharing and guest links remain active.")
+                                    confirmDriving = false
+                                    reloadHome++
+                                }
                                 .onFailure { accountMessage = it.message ?: "Trip could not be ended." } }
                         },
                     )

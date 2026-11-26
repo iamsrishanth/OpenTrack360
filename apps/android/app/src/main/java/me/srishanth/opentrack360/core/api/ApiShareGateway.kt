@@ -45,7 +45,9 @@ class ApiShareGateway(
                         .put("longitude", request.longitude)
                         .put("radiusMeters", request.radiusMeters),
                 )
-            CreateShareRequest.UntilDriveEnd -> JSONObject().put("mode", ShareMode.DRIVE_END.wireValue)
+            is CreateShareRequest.UntilDriveEnd -> JSONObject()
+                .put("mode", ShareMode.DRIVE_END.wireValue)
+                .put("confirmedDrive", request.confirmedDrive)
         }
         val json = api.memberPost("shares", body)
         val created = CreatedShare(

@@ -185,7 +185,10 @@ data class CircleManagementUiState(
 @Composable
 fun CircleManagementScreen(
     state: CircleManagementUiState,
+    inviteLinkAvailable: Boolean,
     onCreateInvite: (circleId: String) -> Unit,
+    onCopyInvite: () -> Unit,
+    onShareInvite: () -> Unit,
     onUpdateMember: (circleId: String, memberId: String, field: String, value: String) -> Unit,
     onRemoveMember: (circleId: String, memberId: String) -> Unit,
     onLeaveCircle: (circleId: String) -> Unit,
@@ -203,6 +206,11 @@ fun CircleManagementScreen(
                     { showInviteWarning = true },
                     Modifier.fillMaxWidth(),
                 )
+                if (inviteLinkAvailable) {
+                    Text("The one-use link is ready. If you closed the share sheet, copy it or open the share sheet again.")
+                    TextButton(onClick = onCopyInvite, modifier = Modifier.fillMaxWidth()) { Text("Copy invitation link") }
+                    TextButton(onClick = onShareInvite, modifier = Modifier.fillMaxWidth()) { Text("Share invitation link again") }
+                }
             }
         }
         SectionHeading("Members")

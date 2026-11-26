@@ -20,6 +20,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +56,7 @@ fun ShareManagementScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedMode by remember { mutableStateOf(ShareMode.TIME) }
+    var confirmedDriving by remember { mutableStateOf(false) }
     var durationMinutes by remember { mutableStateOf("60") }
     var destination by remember { mutableStateOf<GeoPoint?>(null) }
     var radiusMeters by remember { mutableStateOf("150") }
@@ -155,17 +157,17 @@ fun ShareManagementScreen(
         ) {
             FilterChip(
                 selected = selectedMode == ShareMode.TIME,
-                onClick = { selectedMode = ShareMode.TIME },
+                onClick = { selectedMode = ShareMode.TIME; confirmedDriving = false },
                 label = { Text("Until a time") },
             )
             FilterChip(
                 selected = selectedMode == ShareMode.DESTINATION,
-                onClick = { selectedMode = ShareMode.DESTINATION },
+                onClick = { selectedMode = ShareMode.DESTINATION; confirmedDriving = false },
                 label = { Text("At a destination") },
             )
             FilterChip(
                 selected = selectedMode == ShareMode.DRIVE_END,
-                onClick = { selectedMode = ShareMode.DRIVE_END },
+                onClick = { selectedMode = ShareMode.DRIVE_END; confirmedDriving = false },
                 label = { Text("When I stop driving") },
             )
         }
@@ -214,10 +216,19 @@ fun ShareManagementScreen(
                     singleLine = true,
                 )
             }
-            ShareMode.DRIVE_END -> Text(
-                "This link ends only after a confirmed drive followed by five continuous minutes of credible stationary evidence.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            ShareMode.DRIVE_END -> {
+                Text(
+                    "This link ends only after a confirmed drive followed by five continuous minutes of credible stationary evidence.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("I confirm I am driving")
+                        Text("Leave this off if you are a passenger. Driver status is never inferred from speed alone.")
+                    }
+                    Switch(checked = confirmedDriving, onCheckedChange = { confirmedDriving = it })
+                }
+            }
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -231,7 +242,7 @@ fun ShareManagementScreen(
             }
         }
 
-        val requestForReview = selectedRequest(selectedMode, durationMinutes, destination, radiusMeters)
+        val requestForReview = selectedRequest(selectedMode, durationMinutes, destination, radiusMeters, confirmedDriving)
         Button(
             onClick = { pendingReview = requestForReview },
             enabled = requestForReview != null && !creating,
@@ -353,6 +364,7 @@ private fun selectedRequest(
     durationMinutes: String,
     destination: GeoPoint?,
     radiusMeters: String,
+    confirmedDriving: Boolean,
 ): CreateShareRequest? {
     return when (mode) {
         ShareMode.TIME -> durationMinutes.toLongOrNull()?.takeIf { it > 0 }
@@ -362,14 +374,14 @@ private fun selectedRequest(
             val radius = radiusMeters.toIntOrNull()?.takeIf { it in 50..1000 } ?: return null
             CreateShareRequest.UntilDestination(point.latitude, point.longitude, radius)
         }
-        ShareMode.DRIVE_END -> CreateShareRequest.UntilDriveEnd
+        ShareMode.DRIVE_END -> if (confirmedDriving) CreateShareRequest.UntilDriveEnd(confirmedDrive = true) else null
     }
 }
 
 private fun endConditionFor(request: CreateShareRequest): String = when (request) {
     is CreateShareRequest.UntilTime -> "At ${LOCAL_FORMAT.format(request.expiresAt)} local time."
     is CreateShareRequest.UntilDestination -> "After two fresh, accurate fixes at least 60 seconds apart inside the selected ${request.radiusMeters} m radius."
-    CreateShareRequest.UntilDriveEnd -> "After a confirmed drive and five continuous minutes of credible stationary evidence."
+    is CreateShareRequest.UntilDriveEnd -> "After your confirmed drive and five continuous minutes of credible stationary evidence."
 }
 
 private fun ShareMode.label(): String = when (this) {

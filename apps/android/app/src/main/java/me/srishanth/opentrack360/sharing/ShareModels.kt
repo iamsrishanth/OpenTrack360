@@ -22,7 +22,11 @@ sealed interface CreateShareRequest {
         }
     }
 
-    data object UntilDriveEnd : CreateShareRequest
+    data class UntilDriveEnd(val confirmedDrive: Boolean) : CreateShareRequest {
+        init {
+            require(confirmedDrive) { "A drive-end share requires explicit driver confirmation." }
+        }
+    }
 }
 
 enum class ShareMode(val wireValue: String) {
