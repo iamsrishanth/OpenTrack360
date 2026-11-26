@@ -120,7 +120,7 @@ begin
       and t.confirmed_drive and t.drive_classification='driver') then
     return jsonb_build_object('httpStatus',409,'body',jsonb_build_object('error',jsonb_build_object('code','confirmed_drive_required','message','Start and confirm a drive before creating a drive-end share')));
   end if;
-  v_end_condition := case p_mode when 'time' then 'Until selected expiry' when 'destination' then 'After confirmed arrival at destination' else 'After confirmed drive end' end;
+  v_end_condition := case p_mode when 'time' then 'Until selected expiry' when 'destination' then 'After confirmed arrival at destination' else 'When a confirmed drive has five continuous minutes of credible stationary evidence' end;
   insert into private.guest_shares(owner_id,token_hash,mode,sharing_epoch,created_at,started_at,expires_at,destination_latitude,destination_longitude,destination_radius_meters)
   values(p_user_id,p_secret_hash,p_mode,p_sharing_epoch,v_now,v_now,case when p_mode='time' then p_expires_at end,
     case when p_mode='destination' then v_lat end,case when p_mode='destination' then v_lon end,case when p_mode='destination' then v_radius end)
@@ -143,7 +143,7 @@ begin
   if a.must_rotate_password then return jsonb_build_object('httpStatus',428,'body',jsonb_build_object('error',jsonb_build_object('code','password_rotation_required','message','Password rotation required'))); end if;
   select coalesce(jsonb_agg(jsonb_build_object('id',s.id,'mode',s.mode,'status',s.status,'createdAt',s.created_at,
     'startedAt',s.started_at,'expiresAt',s.expires_at,'endedAt',s.ended_at,'endCondition',
-    case s.mode when 'time' then 'Until selected expiry' when 'destination' then 'After confirmed arrival at destination' else 'After confirmed drive end' end)
+    case s.mode when 'time' then 'Until selected expiry' when 'destination' then 'After confirmed arrival at destination' else 'When a confirmed drive has five continuous minutes of credible stationary evidence' end)
     order by s.created_at desc),'[]'::jsonb)
   into v_data from private.guest_shares s where s.owner_id=p_user_id;
   return jsonb_build_object('httpStatus',200,'body',jsonb_build_object('data',v_data,'nextCursor',null));

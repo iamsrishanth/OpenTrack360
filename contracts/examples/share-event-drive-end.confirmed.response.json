@@ -1,0 +1,7 @@
+{
+  "clientEventId": "d0d0d0d0-1111-4111-8111-d0d0d0d0d0d0",
+  "status": "confirmed",
+  "serverTime": "2026-11-26T10:05:11Z",
+  "endedAt": "2026-11-26T10:05:11Z",
+  "reason": "drive_end_confirmed"
+}

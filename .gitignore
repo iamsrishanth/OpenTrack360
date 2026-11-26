@@ -26,6 +26,7 @@ coverage/
 .tsbuildinfo
 *.tsbuildinfo
 .vercel/
+supabase/.temp/
 *.log
 Thumbs.db
 desktop.ini
