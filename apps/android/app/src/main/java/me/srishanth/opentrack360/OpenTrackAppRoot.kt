@@ -685,7 +685,10 @@ fun OpenTrackAppRoot(
                         JSONObject()
                     }
                     petDetail = PetDetailUiState(
-                        pet = pet.copy(photoUrl = profileJson.optNullableString("photoUrl") ?: pet.photoUrl),
+                        pet = pet.copy(
+                            photoUrl = profileJson.optNullableString("photoUrl") ?: pet.photoUrl,
+                            recoveryEnabled = if (isOwner) profileJson.optBoolean("recoveryEnabled", pet.recoveryEnabled) else pet.recoveryEnabled,
+                        ),
                         isOwner = isOwner,
                         routines = buildList { for (index in 0 until routines.length()) routines.optJSONObject(index)?.let { row ->
                             val schedule = row.optNullableString("dueAt")?.let(::formatLocalTime) ?: row.optNullableString("notes") ?: "No reminder time"
@@ -1487,10 +1490,11 @@ fun OpenTrackAppRoot(
                         routineTitle = routineTitle, routineSchedule = routineSchedule, routineKind = routineKind, routineDueAt = routineDueAt,
                         onRoutineTitleChange = { routineTitle = it }, onRoutineScheduleChange = { routineSchedule = it },
                         onRoutineKindChange = { routineKind = it }, onRoutineDueAtChange = { routineDueAt = it },
-                        onRecoveryFieldSelected = { field, selected -> petDetail = state.copy(recoveryFields = if (selected) state.recoveryFields + field else state.recoveryFields - field) },
-                        onOwnerMessageChange = { value -> petDetail = petDetail?.copy(ownerMessage = value.take(500)) },
-                        onContactRouteChange = { value -> petDetail = petDetail?.copy(contactRoute = value.take(200)) },
+                        onRecoveryFieldSelected = { field, selected -> if (state.isOwner) petDetail = state.copy(recoveryFields = if (selected) state.recoveryFields + field else state.recoveryFields - field) },
+                        onOwnerMessageChange = { value -> if (state.isOwner) petDetail = petDetail?.copy(ownerMessage = value.take(500)) },
+                        onContactRouteChange = { value -> if (state.isOwner) petDetail = petDetail?.copy(contactRoute = value.take(200)) },
                         onUpdateRecoverySettings = { id, enabled, fields, ownerMessage, contactRoute ->
+                            if (!state.isOwner) return@PetDetailScreen
                             scope.launch { runCatching { runtime.api.memberPatch("pets/${id.uuidSegment()}", JSONObject()
                                 .put("recoveryEnabled", enabled)
                                 .put("recoveryFields", JSONArray(fields))
@@ -1508,7 +1512,7 @@ fun OpenTrackAppRoot(
                                 }
                                 .onFailure { accountMessage = it.message ?: "Recovery privacy settings could not be saved." } }
                         },
-                        onOpenPhotoPicker = { petPhotoPicker.launch("image/*") },
+                        onOpenPhotoPicker = { if (state.isOwner) petPhotoPicker.launch("image/*") },
                         onCreateRoutine = { id, title, kind, notes, dueAt ->
                             scope.launch { runCatching { runtime.api.memberPost("pets/${id.uuidSegment()}/routines", JSONObject()
                                 .put("clientRequestId", java.util.UUID.randomUUID().toString())
@@ -1526,6 +1530,7 @@ fun OpenTrackAppRoot(
                                 .onFailure { accountMessage = it.message ?: "Care routine could not be marked complete." } }
                         },
                         onCreateRecoveryLink = { id ->
+                            if (!state.isOwner) return@PetDetailScreen
                             scope.launch { runCatching { runtime.api.memberRequest("POST", "pets/${id.uuidSegment()}/recovery-link") }
                                 .onSuccess { response ->
                                     val url = response.optString("url")
@@ -1537,17 +1542,20 @@ fun OpenTrackAppRoot(
                                 .onFailure { accountMessage = it.message ?: "Recovery link could not be created." } }
                         },
                         onRevokeRecoveryLink = { id ->
+                            if (!state.isOwner) return@PetDetailScreen
                             scope.launch { runCatching { runtime.api.memberDelete("pets/${id.uuidSegment()}/recovery-link") }
                                 .onSuccess { petDetail = petDetail?.copy(recoveryLinkCreatedAt = null); petRecoveryUrl = null; accountMessage = "Recovery link revoked." }
                                 .onFailure { accountMessage = it.message ?: "Recovery link could not be revoked." } }
                         },
-                        onCreateLostPetReport = { page = AppPage.LOST_PET; lostPetCircles = emptySet() },
+                        onCreateLostPetReport = { if (state.isOwner) { page = AppPage.LOST_PET; lostPetCircles = emptySet() } },
                         onRevokeLostPetReport = { reportId ->
+                            if (!state.isOwner) return@PetDetailScreen
                             scope.launch { runCatching { runtime.api.memberDelete("lost-pets/${reportId.uuidSegment()}") }
                                 .onSuccess { activeLostPetReportIds = activeLostPetReportIds - (selectedPetId ?: ""); petDetail = petDetail?.copy(activeLostPetReportId = null); accountMessage = "Lost-pet report revoked." }
                                 .onFailure { accountMessage = it.message ?: "Lost-pet report could not be revoked." } }
                         },
                         onDeletePet = { id ->
+                            if (!state.isOwner) return@PetDetailScreen
                             scope.launch { runCatching { runtime.api.memberDelete("pets/${id.uuidSegment()}") }
                                 .onSuccess { selectedPetId = null; petDetail = null; page = AppPage.PETS; reloadHome++ }
                                 .onFailure { accountMessage = it.message ?: "Pet profile could not be deleted." } }
