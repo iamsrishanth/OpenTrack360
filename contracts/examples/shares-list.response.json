@@ -8,7 +8,23 @@
       "startedAt": "2026-11-26T10:00:00Z",
       "expiresAt": null,
       "endedAt": null,
+      "destination": null,
       "endCondition": "Confirmed drive end"
+    },
+    {
+      "id": "90b23e85-48ae-4097-aa7d-d4869edc14c4",
+      "mode": "destination",
+      "status": "active",
+      "createdAt": "2026-11-26T09:45:00Z",
+      "startedAt": "2026-11-26T09:45:00Z",
+      "expiresAt": null,
+      "endedAt": null,
+      "destination": {
+        "latitude": 19.076,
+        "longitude": 72.8777,
+        "radiusMeters": 150
+      },
+      "endCondition": "After confirmed arrival at destination"
     }
   ],
   "nextCursor": null
