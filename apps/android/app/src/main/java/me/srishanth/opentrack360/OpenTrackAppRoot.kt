@@ -1,6 +1,7 @@
 package me.srishanth.opentrack360
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -27,6 +28,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +44,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import me.srishanth.opentrack360.core.OpenTrackRuntime
 import me.srishanth.opentrack360.core.api.ApiException
 import me.srishanth.opentrack360.core.api.MemberProfile
@@ -184,6 +188,7 @@ fun OpenTrackAppRoot(
     var inviteAcceptError by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf(PasswordFormUiState()) }
     var accountMessage by remember { mutableStateOf<String?>(null) }
+    var reminderNotificationsEnabled by remember { mutableStateOf<Boolean?>(null) }
     var circleState by remember { mutableStateOf(CircleHomeUiState()) }
     var selectedCircleId by remember { mutableStateOf<String?>(null) }
     var reloadHome by remember { mutableStateOf(0) }
@@ -265,6 +270,14 @@ fun OpenTrackAppRoot(
     var petSightingAccuracy by remember { mutableStateOf("") }
     var petSightingContactRoute by remember { mutableStateOf("") }
 
+    DisposableEffect(activity) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) reminderNotificationsEnabled = null
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer) }
+    }
+
     val petPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val petId = selectedPetId ?: return@rememberLauncherForActivityResult
         if (uri == null) return@rememberLauncherForActivityResult
@@ -334,6 +347,16 @@ fun OpenTrackAppRoot(
             }
         }
     }
+
+    val requestNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        reminderNotificationsEnabled = granted
+        if (!granted) {
+            accountMessage = "Care reminder saved, but Android notification access is off. Enable notifications in system settings to receive an alert."
+        }
+    }
+
+    val notificationManager = activity.getSystemService(NotificationManager::class.java)
+    val notificationsEnabled = reminderNotificationsEnabled ?: (notificationManager?.areNotificationsEnabled() != false)
 
     fun startFromConsent() {
         val current = session ?: return
@@ -1621,7 +1644,7 @@ fun OpenTrackAppRoot(
                         state = state,
                         recoveryQrBitmap = remember(petRecoveryUrl) { petRecoveryUrl?.let(::createRecoveryQrBitmap) },
                         routineTitle = routineTitle, routineSchedule = routineSchedule, routineKind = routineKind, routineDueAt = routineDueAt,
-                        routineRepeat = routineRepeat, routineLocalTime = routineLocalTime,
+                        routineRepeat = routineRepeat, routineLocalTime = routineLocalTime, notificationsEnabled = notificationsEnabled,
                         onRoutineTitleChange = { routineTitle = it }, onRoutineScheduleChange = { routineSchedule = it },
                         onRoutineKindChange = { routineKind = it }, onRoutineDueAtChange = { routineDueAt = it },
                         onRoutineRepeatChange = { routineRepeat = it }, onRoutineLocalTimeChange = { routineLocalTime = it },
@@ -1649,6 +1672,11 @@ fun OpenTrackAppRoot(
                         },
                         onOpenPhotoPicker = { if (state.isOwner) petPhotoPicker.launch("image/*") },
                         onCreateRoutine = { id, title, kind, notes, dueAt, repeat, localTime ->
+                            if ((dueAt != null || repeat != null) && Build.VERSION.SDK_INT >= 33 &&
+                                activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                            ) {
+                                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
                             scope.launch { runCatching {
                                 val zone = ZoneId.systemDefault()
                                 val recurrence = repeat?.let { frequency ->

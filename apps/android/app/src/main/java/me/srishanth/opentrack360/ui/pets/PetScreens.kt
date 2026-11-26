@@ -1,7 +1,5 @@
 package me.srishanth.opentrack360.ui.pets
 
-import android.app.NotificationManager
-import android.content.Context
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,7 +13,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import me.srishanth.opentrack360.ui.components.DestructiveActionButton
 import me.srishanth.opentrack360.ui.components.EmptyStateCard
@@ -109,6 +106,7 @@ fun PetDetailScreen(
     routineDueAt: String,
     routineRepeat: String,
     routineLocalTime: String,
+    notificationsEnabled: Boolean,
     onRoutineTitleChange: (String) -> Unit,
     onRoutineScheduleChange: (String) -> Unit,
     onRoutineKindChange: (String) -> Unit,
@@ -130,9 +128,6 @@ fun PetDetailScreen(
     onBack: () -> Unit,
 ) {
     val pet = state.pet
-    val context = LocalContext.current
-    val notificationsEnabled = (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
-        ?.areNotificationsEnabled() != false
     MemberScreen(title = pet.name, subtitle = "${pet.speciesLabel} · shared with ${pet.sharedCircleNames.takeIf { it.isNotEmpty() }?.joinToString() ?: "no Circles"}") {
         StatusBanner(state.condition, "Pet profile", state.message)
         MemberCard {
