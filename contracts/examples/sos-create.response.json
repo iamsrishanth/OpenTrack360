@@ -1,0 +1,12 @@
+{
+  "id": "a55e5d24-92b7-4b14-9763-66a94ee721e5",
+  "status": "submitted",
+  "recipients": [
+    {
+      "recipientId": "d1a97680-faa9-4f37-8d8f-59841456c981",
+      "state": "submitted"
+    }
+  ],
+  "createdAt": "2026-11-26T10:00:05Z",
+  "providerMessageId": "fixture-provider-message-id"
+}

@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: OpenTrack360 API
   version: 1.0.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-OpenTrack360
   description: >-
     Versioned Android and web API. API timestamps are RFC 3339 UTC; latitude and
     longitude are decimal degrees, horizontal accuracy is metres, and speed is
@@ -13,17 +16,29 @@ servers:
     description: Production API
 tags:
   - name: Auth
+    description: Username-based member authentication and session lifecycle.
   - name: Member
+    description: Caller-owned profile and privacy controls.
   - name: Location
+    description: Authenticated, bounded location ingest.
   - name: Shares
+    description: Sender-owned guest link creation and revocation.
   - name: Guest
+    description: Read-only, single-share access for signed-out recipients.
   - name: Circles
+    description: Private Circle membership, consent, maps, and history.
   - name: Places
+    description: Circle Places, geofences, and No Show rules.
   - name: Coordination
+    description: Check-ins, events, activity, trips, and notifications.
   - name: Safety
+    description: Measured driving reports, SOS, and emergency contacts.
   - name: Pets
+    description: Pet profiles, care routines, and consent-limited recovery.
   - name: Privacy
+    description: Data access, deletion, and guardian-consent workflows.
   - name: Platform Admin
+    description: Account administration only; no map or history access.
 security:
   - memberBearer: []
 paths:
@@ -365,12 +380,18 @@ paths:
                     latest: null
         '404':
           description: Unknown share or invalid/missing bearer secret; no location
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+            Referrer-Policy: { schema: { type: string, const: no-referrer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
               example: { error: { code: NOT_FOUND, message: Share not found } }
         '410':
           description: Valid share ended or expired; no location
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+            Referrer-Policy: { schema: { type: string, const: no-referrer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
@@ -739,6 +760,34 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/MutationResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/activity:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Coordination]
+      operationId: getCircleActivity
+      summary: Read only consented activity state for Circle members
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/morning-check-ins:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+    get:
+      tags: [Coordination]
+      operationId: listMorningCheckIns
+      summary: Read morning activity cards for consenting members
+      responses:
+        '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Coordination]
+      operationId: createMorningCheckIn
+      summary: Send a morning greeting or check-in to this Circle
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /circles/{circleId}/trips:
     parameters:
       - { $ref: '#/components/parameters/CircleId' }
@@ -778,6 +827,28 @@ paths:
       summary: Read opt-in driving summaries measured from available phone data
       responses:
         '200': { $ref: '#/components/responses/ResourceList' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /circles/{circleId}/driving/trips/{tripId}:
+    parameters:
+      - { $ref: '#/components/parameters/CircleId' }
+      - { name: tripId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Safety]
+      operationId: correctDriveClassification
+      summary: Let the trip owner correct driver/passenger classification
+      description: Members may correct only their own drive. Reports recalculate from measurements the device actually collected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [classification]
+              properties:
+                classification: { type: string, enum: [driver, passenger] }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /notifications:
     get:
@@ -983,6 +1054,30 @@ paths:
                   objectPath: { type: string }
                   expiresAt: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /pets/{petId}/recovery-link:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Pets]
+      operationId: createPetRecoveryLink
+      summary: Create or rotate a consent-limited software-only recovery QR link
+      description: >-
+        Returns the full link once in the form
+        https://track.srishanth.me/p/{petId}#{secret}. Store only a digest of the
+        256-bit random secret. The public ID is non-secret; the browser reads the
+        fragment locally and sends the secret in Authorization.
+      responses:
+        '201':
+          description: Secret-bearing recovery link, returned once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, createdAt]
+                properties:
+                  url: { type: string, format: uri }
+                  createdAt: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /pets/{petId}/routines/{routineId}/complete:
     parameters:
       - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1008,44 +1103,69 @@ paths:
       responses:
         '201': { $ref: '#/components/responses/Resource' }
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
-  /public/pets/{recoveryCode}:
+  /public/pets/{petId}:
     parameters:
-      - name: recoveryCode
+      - name: petId
         in: path
         required: true
-        schema: { type: string, minLength: 20, maxLength: 128 }
+        schema: { type: string, format: uuid }
     get:
       tags: [Pets]
       operationId: readPetRecoveryCard
-      security: []
+      security:
+        - petRecoverySecret: []
       summary: Read the owner's consent-limited software-only pet recovery card
-      description: No account or hardware tracker is required. The high-entropy code grants access only to the owner-approved public fields and never to Circle membership or private history.
+      description: No account or hardware tracker is required. The fragment secret grants access only to owner-approved public fields and never to Circle membership or private history. The token is not placed in the path, query, referrer, or initial request.
       responses:
         '200':
           description: Limited pet recovery details selected by the owner
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+            Referrer-Policy: { schema: { type: string, const: no-referrer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PetRecoveryCard' }
-        '404': { $ref: '#/components/responses/NotFound' }
-  /public/pets/{recoveryCode}/sightings:
+        '404':
+          description: Unknown pet or invalid/missing recovery secret; no profile data
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+            Referrer-Policy: { schema: { type: string, const: no-referrer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /public/pets/{petId}/sightings:
     parameters:
-      - name: recoveryCode
+      - name: petId
         in: path
         required: true
-        schema: { type: string, minLength: 20, maxLength: 128 }
+        schema: { type: string, format: uuid }
     post:
       tags: [Pets]
       operationId: submitPetSighting
-      security: []
+      security:
+        - petRecoverySecret: []
       summary: Submit an optional finder sighting to the owner's selected recipients
+      description: Sighting details are visible only to the pet owner and their selected recipients. The recovery secret is accepted in Authorization only.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/PetSightingRequest' }
       responses:
-        '202': { $ref: '#/components/responses/MutationResult' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '202':
+          description: Sighting accepted for owner-selected recipients
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationResult' }
+        '404':
+          description: Unknown pet or invalid/missing recovery secret
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /guardian-consents:
     post:
@@ -1088,7 +1208,11 @@ paths:
       tags: [Privacy]
       operationId: requestAccountDeletion
       summary: Request account and personal-data deletion
-      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LostPetReportInput' }
       responses:
         '202': { $ref: '#/components/responses/MutationResult' }
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
@@ -1155,6 +1279,11 @@ components:
       scheme: bearer
       bearerFormat: base64url random secret
       description: Per-share 256-bit secret, accepted only for GET /public/shares/{shareId}.
+    petRecoverySecret:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url random secret
+      description: Per-pet 256-bit secret from the fragment; accepted only for public recovery card and sighting endpoints.
     adminSession:
       type: apiKey
       in: cookie
@@ -1177,18 +1306,6 @@ components:
       required: true
       schema: { type: string, format: uuid }
   requestBodies:
-    CircleInput:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            additionalProperties: false
-            required: [name]
-            properties:
-              name: { type: string, minLength: 1, maxLength: 80 }
-              kind: { type: string, enum: [standard, temporary, lightweight], default: standard }
-              expiresAt: { type: string, format: date-time, description: Required for temporary Circles; server validates allowed duration. }
     JsonObject:
       required: true
       content:
@@ -1356,6 +1473,13 @@ components:
         longitude: { type: number, minimum: -180, maximum: 180 }
         radiusMeters: { type: integer, minimum: 50, maximum: 5000 }
         createdAt: { type: string, format: date-time }
+    PlaceList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Place' } }
+        nextCursor: { type: [string, 'null'] }
     TripStartRequest:
       type: object
       additionalProperties: false
@@ -1377,6 +1501,13 @@ components:
         estimatedArrivalAt: { type: [string, 'null'], format: date-time }
         distanceRemainingMeters: { type: [number, 'null'], minimum: 0 }
         destinationLabel: { type: [string, 'null'] }
+    TripList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/TripSummary' } }
+        nextCursor: { type: [string, 'null'] }
     NotificationList:
       type: object
       additionalProperties: false
@@ -1627,6 +1758,25 @@ components:
           type: array
           items: { type: string, enum: [petName, species, photo, ownerMessage, contactRoute] }
           description: Explicit allowlist of fields exposed by the software-only recovery QR.
+    PetProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, circleIds, recoveryEnabled]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        species: { type: [string, 'null'] }
+        photoUrl: { type: [string, 'null'], format: uri, description: Short-lived authenticated URL. }
+        circleIds: { type: array, items: { type: string, format: uuid } }
+        recoveryEnabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    PetList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/PetProfile' } }
+        nextCursor: { type: [string, 'null'] }
     PetRecoveryCard:
       type: object
       additionalProperties: false
@@ -1637,6 +1787,15 @@ components:
         photoUrl: { type: [string, 'null'], format: uri, description: Short-lived URL to the owner's approved pet photo. }
         ownerMessage: { type: string, maxLength: 500 }
         contactRoute: { type: [string, 'null'], description: Owner-controlled in-app relay or other explicitly selected contact route; no Circle roster or private phone is exposed by default. }
+    LostPetReportInput:
+      type: object
+      additionalProperties: false
+      required: [petId, recipientCircleIds, expiresAt]
+      properties:
+        petId: { type: string, format: uuid }
+        recipientCircleIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+        message: { type: [string, 'null'], maxLength: 500 }
+        expiresAt: { type: string, format: date-time, description: Maximum 72 hours; server enforced. }
     PetSightingRequest:
       type: object
       additionalProperties: false
@@ -1646,7 +1805,7 @@ components:
         latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
         longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
         accuracyMeters: { type: [number, 'null'], minimum: 0, maximum: 10000 }
-        contactRoute: { type: [string, 'null'], maxLength: 200, description: Optional finder-provided callback, shared only with the owner's selected recipients. }
+        contactRoute: { type: [string, 'null'], maxLength: 200, description: 'Optional finder-provided callback, shared only with the owner’s selected recipients.' }
     GuardianConsentRequest:
       type: object
       additionalProperties: false

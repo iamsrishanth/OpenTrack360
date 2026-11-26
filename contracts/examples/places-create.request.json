@@ -1,0 +1,8 @@
+{
+  "name": "Home",
+  "latitude": 19.076,
+  "longitude": 72.8777,
+  "radiusMeters": 150,
+  "alertOnArrival": true,
+  "alertOnDeparture": false
+}
