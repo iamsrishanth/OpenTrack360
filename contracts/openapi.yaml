@@ -1212,9 +1212,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/LostPetReportInput' }
+            schema: { $ref: '#/components/schemas/PrivacyDeletionRequest' }
       responses:
-        '202': { $ref: '#/components/responses/MutationResult' }
+        '202':
+          description: Deletion request accepted for the authenticated account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivacyDeletionAccepted' }
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
   /admin/accounts:
     get:
@@ -1814,6 +1818,22 @@ components:
         childMemberId: { type: string, format: uuid }
         guardianUsername: { type: string, minLength: 3, maxLength: 32 }
         relationship: { type: string, enum: [parent, guardian] }
+    PrivacyDeletionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, confirmationPhrase]
+      properties:
+        reason: { type: string, enum: [no_longer_needed, privacy_concern, switching_service, other] }
+        details: { type: string, maxLength: 500, description: Optional explanation; avoid entering sensitive information. }
+        confirmationPhrase: { type: string, const: DELETE MY ACCOUNT, description: The client sends this exact phrase only after an explicit confirmation step. }
+    PrivacyDeletionAccepted:
+      type: object
+      additionalProperties: false
+      required: [accepted, requestId, status]
+      properties:
+        accepted: { type: boolean, const: true }
+        requestId: { type: string, format: uuid }
+        status: { type: string, const: queued }
     ApiError:
       type: object
       required: [error]
