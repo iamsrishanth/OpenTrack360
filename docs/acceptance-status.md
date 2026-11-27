@@ -6,15 +6,15 @@
 
 **Web implementation:** `510dc92572e5838aa525d68e243e9fa569824501`
 
-**Current production deployment commit:** `0959572e15f1a045c042a2a5a341172d574da327`
+**Production application code commit:** `0959572e15f1a045c042a2a5a341172d574da327`
 
-**Current production deployment:** `dpl_E9x6d9F6XLEAxw3xrGayuAWqzXmF` (READY; aliases include `track.srishanth.me`)
+**Verified release deployment:** `dpl_E9x6d9F6XLEAxw3xrGayuAWqzXmF` (READY; aliased to `track.srishanth.me` when verified)
 
 This records production deployment, hosted migration, and drive-end validator evidence. Signed-in end-to-end acceptance still needs an authorized platform administrator and disposable synthetic member credentials.
 
 ## Production deployment and route probes
 
-The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). The production deployment is READY and aliases the custom domain to the `main` deployment. Vercel reports that it was built from `main` at merge commit `aa28f422c80ed55f8087d5baf9f5ee239a6dff1a`.
+The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). The release implementation at `0959572e15f1a045c042a2a5a341172d574da327` was deployed READY and aliased to the custom domain. A later documentation-only merge rebuilt the same application code.
 
 | Production request | Observed result | What it proves |
 | --- | --- | --- |
