@@ -6,6 +6,8 @@ on:
       - "supabase/**"
       - "contracts/examples/**"
       - "scripts/generate-drive-end-pgtap.mjs"
+      - "scripts/operator-provision-admin.mjs"
+      - "scripts/operator-provision-admin.test.mjs"
       - ".github/workflows/supabase-database.yml"
   push:
     branches:
@@ -14,6 +16,8 @@ on:
       - "supabase/**"
       - "contracts/examples/**"
       - "scripts/generate-drive-end-pgtap.mjs"
+      - "scripts/operator-provision-admin.mjs"
+      - "scripts/operator-provision-admin.test.mjs"
       - ".github/workflows/supabase-database.yml"
 
 permissions:
@@ -35,6 +39,9 @@ jobs:
 
       - name: Verify generated drive-end tests are committed
         run: git diff --exit-code -- supabase/tests/drive_end_contract_examples.sql
+
+      - name: Test guarded operator command helpers
+        run: node --test scripts/operator-provision-admin.test.mjs
 
       - name: Start isolated local Supabase stack
         run: supabase start
