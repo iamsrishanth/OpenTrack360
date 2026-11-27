@@ -355,17 +355,37 @@ paths:
         share starts. Drive-end evidence must belong to the linked confirmed
         trip's member session and sharing epoch; its moving pair may predate the
         share start, while the full stationary end window must be post-share.
+        Drive-end needs at least two credible moving fixes spanning 30 seconds
+        and at least 150 metres; the last moving fix must be within 90 seconds
+        of the first stationary fix. The stationary window must span five
+        minutes, with no gap over 90 seconds, speeds at or below 1.5 m/s,
+        accuracy at or below 50 metres, and all fixes within 75 metres of the
+        first stationary fix.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/ShareEventRequest' }
+            examples:
+              nineMinuteGap:
+                summary: Nine-minute movement-to-stop gap stays pending
+                externalValue: ./examples/share-event-drive-end.request.json
+              validDriveEnd:
+                summary: Sixty-second transition and five-minute stop confirms
+                externalValue: ./examples/share-event-drive-end.confirmed.request.json
       responses:
         '200':
           description: Event accepted, pending more evidence, or duplicate
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ShareEventResult' }
+              examples:
+                nineMinuteGapPending:
+                  summary: Insufficient continuity keeps the link active
+                  externalValue: ./examples/share-event-drive-end.pending.response.json
+                driveEndConfirmed:
+                  summary: Valid movement and stationary evidence ends the link
+                  externalValue: ./examples/share-event-drive-end.confirmed.response.json
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
