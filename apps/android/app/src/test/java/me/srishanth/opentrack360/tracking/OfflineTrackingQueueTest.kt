@@ -4,11 +4,39 @@ import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OfflineTrackingQueueTest {
+    @Test
+    fun driveEndQueueAcceptsContractEvidenceWithinTheEightMinuteCaptureBound() {
+        val moving = listOf(
+            LocationSample.create(at(-120), 19.076, 72.877, 12.0, 9.2),
+            LocationSample.create(at(-60), 19.081, 72.877, 10.0, 9.2),
+        )
+        val stationary = (0L..300L step 60L).map { second ->
+            LocationSample.create(at(second), 19.081, 72.877, 10.0, 0.0)
+        }
+        val evidence = moving + stationary
+        val now = at(310)
+        val terminal = PendingShareEvent(
+            eventType = ShareEventType.DRIVE_END,
+            observedAt = now.toString(),
+            evidenceFixes = evidence,
+        )
+
+        assertTrue(queue().enqueueShareEvent(scope, SHARE_ID, terminal, now))
+
+        val tooOldMovement = moving.first().copy(capturedAt = at(-181).toString())
+        val staleTerminal = terminal.copy(
+            clientEventId = UUID.randomUUID().toString(),
+            evidenceFixes = listOf(tooOldMovement) + evidence.drop(1),
+        )
+        assertFalse(queue().enqueueShareEvent(scope, SHARE_ID, staleTerminal, now))
+    }
+
     @Test
     fun offlineTerminalEventIsFlushedBeforeAnyLaterFix() = runBlocking {
         val queue = queue()

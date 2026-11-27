@@ -407,7 +407,7 @@ private class DriveClassifier(private val endThreshold: Duration) {
     }
 }
 
-/** Verifies that a bounded drive_end payload still satisfies the server's moving/stationary rules. */
+/** Builds conservative local drive_end evidence; the server independently verifies canonical fixes and the stationary window. */
 object DriveEndEvidencePolicy {
     /**
      * Allows only moving fixes from the linked confirmed trip to predate share creation. The

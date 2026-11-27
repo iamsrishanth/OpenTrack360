@@ -3,6 +3,18 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+val releaseKeystore = System.getenv("OPENTRACK360_RELEASE_KEYSTORE")
+val releaseStorePassword = System.getenv("OPENTRACK360_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = System.getenv("OPENTRACK360_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("OPENTRACK360_RELEASE_KEY_PASSWORD")
+val releaseSigningValues = listOf(releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword)
+val releaseSigningRequested = releaseSigningValues.any { !it.isNullOrBlank() }
+val releaseSigningConfigured = releaseSigningValues.all { !it.isNullOrBlank() }
+
+if (releaseSigningRequested && !releaseSigningConfigured) {
+    throw GradleException("Release signing requires the complete OPENTRACK360_RELEASE_* environment configuration.")
+}
+
 android {
     namespace = "me.srishanth.opentrack360"
     compileSdk = 37
@@ -23,6 +35,17 @@ android {
         buildConfig = true
     }
 
+    if (releaseSigningConfigured) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystore!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -36,6 +59,9 @@ android {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
