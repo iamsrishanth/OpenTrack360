@@ -31,6 +31,8 @@ The helper reads the password through Windows DPAPI, exposes it only to the Grad
 Get-FileHash .\app\build\outputs\apk\release\app-release.apk -Algorithm SHA256
 ```
 
+The verified build from this release checkpoint is `app/build/outputs/apk/release/app-release.apk` (70,954,779 bytes; SHA-256 `8A88A7A7C05845B575F200C030CE4C2BE2FEB4E646A30289D80CDE8337D68289`). `apksigner verify --print-certs` confirmed the package signer and certificate above; `zipalign -c 4` passed.
+
 ## Backup and restore
 
 Keep the original key and password recoverable for every future APK update. Losing the key means existing direct-install users cannot receive an in-place update signed with the same identity.
