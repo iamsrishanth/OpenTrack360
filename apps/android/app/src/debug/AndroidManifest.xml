@@ -1,0 +1,34 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <activity android:name=".MainActivity">
+            <intent-filter android:autoVerify="true" tools:node="remove">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="track.srishanth.me"
+                    android:pathPrefix="/s/" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true" tools:node="remove">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="track.srishanth.me"
+                    android:pathPrefix="/p/" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true" tools:node="remove">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="track.srishanth.me"
+                    android:path="/i" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
