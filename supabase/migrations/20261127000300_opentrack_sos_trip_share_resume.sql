@@ -32,6 +32,8 @@ declare
   v_new text;
 begin
   v_definition := pg_get_functiondef('public.opentrack_api_dispatch(uuid,uuid,text,jsonb,bigint)'::regprocedure);
+  -- SQL-editor-installed functions may retain Windows line endings.
+  v_definition := replace(v_definition, E'\r\n', E'\n');
 
   v_old := $old$insert into private.notifications(recipient_user_id,circle_id,kind,title,body,delivery_state)
       select u.recipient_id,v_circle_id,'sos','SOS alert',null,'queued' from unnest(v_ids) as u(recipient_id);$old$;
