@@ -6,13 +6,13 @@
 
 **Web implementation:** `510dc92572e5838aa525d68e243e9fa569824501`
 
-**Production merge/deployment:** `485fddc716aa098076be600645b69b0cd4f044b7`
+**Production application release:** `485fddc716aa098076be600645b69b0cd4f044b7`
 
 This records production deployment and hosted migration evidence. Signed-in end-to-end acceptance still needs disposable member credentials in an isolated test environment.
 
 ## Production deployment and route probes
 
-The existing Vercel project `opentrack360` serves `track.srishanth.me`. The Vercel production deployment for merge commit `485fddc716aa098076be600645b69b0cd4f044b7` is READY and has aliases `track.srishanth.me`, `opentrack360.vercel.app`, and the main-branch Vercel host. The deployment URL is [opentrack360-ey04pje5g-srishanths-projects.vercel.app](https://opentrack360-ey04pje5g-srishanths-projects.vercel.app).
+The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). The production deployment is READY and the custom domain resolves to the `main` deployment. The application routes in that deployment use the release from merge commit `485fddc716aa098076be600645b69b0cd4f044b7`; the current acceptance-record commit changes documentation only.
 
 | Production request | Observed result | What it proves |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ Read-only checks after the push confirm the new trip session and sharing-epoch f
 - `npm run build`: passed and generated the guest share, pet recovery, invitation, admin, and versioned API routes.
 - Redocly lint for `contracts/openapi.yaml`: passed; all 118 contract JSON examples parsed.
 - The post-merge [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45947182673) applied all eight migrations to a fresh local Supabase stack and passed all 100 pgTAP assertions.
-- The production Vercel deployment is READY for merge commit `485fddc716aa098076be600645b69b0cd4f044b7`; the Vercel and Vercel Preview Comments checks passed before merge.
+- The production Vercel deployment is READY for the current `main` revision, with application code from release commit `485fddc716aa098076be600645b69b0cd4f044b7`; the Vercel and Vercel Preview Comments checks passed before merge.
 
 ## Remaining acceptance and provider prerequisites
 
