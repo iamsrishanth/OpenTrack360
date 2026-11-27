@@ -108,6 +108,7 @@ declare
   v_new text;
 begin
   v_definition := pg_get_functiondef('public.opentrack_api_dispatch(uuid,uuid,text,jsonb,bigint)'::regprocedure);
+  v_definition := replace(v_definition, E'\r\n', E'\n');
   v_old := $old$insert into private.trips(user_id,circle_id,recipients,destination_label,destination_latitude,destination_longitude,share_lock_screen_progress,confirmed_drive)
     values(p_user_id,v_circle_id,v_ids,nullif(v_body->>'destinationLabel',''),nullif(v_body->>'destinationLatitude','')::double precision,
       nullif(v_body->>'destinationLongitude','')::double precision,coalesce((v_body->>'shareLockScreenProgress')::boolean,false),
@@ -133,6 +134,7 @@ declare
   v_new text;
 begin
   v_definition := pg_get_functiondef('public.opentrack_share_create(uuid,uuid,bigint,text,timestamptz,jsonb,text,boolean)'::regprocedure);
+  v_definition := replace(v_definition, E'\r\n', E'\n');
   v_old := $old$  if p_mode='drive_end' then
     select * into v_trip from private.trips t
     where t.user_id=p_user_id and t.status='active' and t.confirmed_drive and t.drive_classification='driver'
@@ -186,6 +188,7 @@ declare
   v_new text;
 begin
   v_definition := pg_get_functiondef('public.opentrack_share_event(uuid,uuid,uuid,jsonb)'::regprocedure);
+  v_definition := replace(v_definition, E'\r\n', E'\n');
 
   v_old := $old$  -- Canonicalize offline evidence; altered retries never replace stored fixes.
   for v_fix in select value from jsonb_array_elements(v_fixes) loop$old$;
@@ -290,6 +293,7 @@ declare
   v_new text;
 begin
   v_definition := pg_get_functiondef('public.opentrack_share_list(uuid,uuid)'::regprocedure);
+  v_definition := replace(v_definition, E'\r\n', E'\n');
   v_old := $old$'startedAt',s.started_at,'expiresAt',s.expires_at,'endedAt',s.ended_at,'endCondition',$old$;
   v_new := $new$'startedAt',s.started_at,'expiresAt',s.expires_at,'endedAt',s.ended_at,'destination',
     case when s.mode='destination' then jsonb_build_object('latitude',s.destination_latitude,'longitude',s.destination_longitude,'radiusMeters',s.destination_radius_meters) else null end,
