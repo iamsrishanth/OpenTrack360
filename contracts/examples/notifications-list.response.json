@@ -3,6 +3,8 @@
     {
       "id": "1b0664cb-2714-4965-91a8-4d1d26d43cda",
       "kind": "sos",
+      "circleId": "44444444-4444-4444-8444-444444444444",
+      "sosId": "aa5a8682-8275-4b3a-8b20-f0c51e0ff413",
       "createdAt": "2026-11-26T10:00:05Z",
       "deliveryState": "submitted",
       "title": "SOS alert",

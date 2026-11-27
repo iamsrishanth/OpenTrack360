@@ -283,9 +283,13 @@ paths:
         Returns the complete secret-bearing link once. Persist only a digest of
         the 256-bit random secret. The URL fragment is not sent to the web
         server on initial navigation. For a drive_end share, `confirmedDrive`
-        is an explicit member confirmation. If there is no active confirmed
-        Circle drive, true starts a private guest-only drive session; false or
-        omission does not start one.
+        is an explicit member confirmation. If no active confirmed drive
+        exists, true starts a private guest-only drive session; false or
+        omission does not start one. A Circle drive can be reused only from
+        the same member session and current sharing epoch. An active drive from
+        another session, or a pre-upgrade active drive without recorded
+        session and epoch, returns 409 and must be stopped and restarted on the
+        current device before it can be shared.
       requestBody:
         required: true
         content:
@@ -309,7 +313,7 @@ paths:
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
         '409':
-          description: A drive_end share needs an active confirmed driver session or explicit confirmedDrive true
+          description: A drive_end share needs an active confirmed driver trip from the same session and sharing epoch, or confirmedDrive true when no active drive exists; a different or unbound active trip returns 409
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
@@ -347,7 +351,10 @@ paths:
         evidence using the authenticated owner, timestamps, ordering, accuracy,
         and server-side thresholds. First confirmed ending wins. A parked start,
         GPS gap, poor accuracy, traffic stop, duplicate or late request cannot
-        end or revive a share.
+        end or revive a share. Destination evidence must be captured after the
+        share starts. Drive-end evidence must belong to the linked confirmed
+        trip's member session and sharing epoch; its moving pair may predate the
+        share start, while the full stationary end window must be post-share.
       requestBody:
         required: true
         content:
@@ -2037,11 +2044,12 @@ components:
     TripSummary:
       type: object
       additionalProperties: false
-      required: [id, status, startedAt]
+      required: [id, status, startedAt, confirmedDrive]
       properties:
         id: { type: string, format: uuid }
         status: { type: string, enum: [active, ended] }
         startedAt: { type: string, format: date-time }
+        confirmedDrive: { type: boolean, description: The caller's explicit driver confirmation stored by the server; false when omitted at trip start. }
         endedAt: { type: [string, 'null'], format: date-time }
         endReason: { type: [string, 'null'], enum: [arrived, cancelled, other, server_confirmed, null] }
         estimatedArrivalAt: { type: [string, 'null'], format: date-time }
@@ -2090,10 +2098,12 @@ components:
     Notification:
       type: object
       additionalProperties: false
-      required: [id, kind, createdAt, deliveryState]
+      required: [id, kind, circleId, sosId, createdAt, deliveryState]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, enum: [place_arrival, place_departure, no_show, quick_note, checkin, event, sos, low_battery, trip_progress, pet_routine] }
+        circleId: { type: [string, 'null'], format: uuid, description: Authenticated Circle route context when the notification came from a Circle. }
+        sosId: { type: [string, 'null'], format: uuid, description: 'For kind sos, use with circleId to read or acknowledge that alert through authenticated Circle SOS routes.' }
         createdAt: { type: string, format: date-time }
         deliveryState: { type: string, enum: [queued, submitted, received, acknowledged, failed] }
         title: { type: string, maxLength: 120 }
@@ -2311,7 +2321,7 @@ components:
     CreatedShare:
       type: object
       additionalProperties: false
-      required: [id, url, mode, status, startedAt, createdAt]
+      required: [id, url, mode, status, startedAt, createdAt, tripId, tripStartedAt, tripSessionMatchesCurrent, sharingEpoch]
       properties:
         id: { type: string, format: uuid }
         url: { type: string, format: uri, description: The only response that contains the secret. }
@@ -2320,7 +2330,11 @@ components:
         startedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: [string, 'null'], format: date-time }
-        endCondition: { type: string }
+        endCondition: { type: string, description: Human-readable terminal condition; drive_end states the five continuous minutes of credible stationary evidence required after confirmed driving. }
+        tripId: { type: [string, 'null'], format: uuid, description: Sender-only identifier of the exact trip linked to a drive_end share; null for other modes. }
+        tripStartedAt: { type: [string, 'null'], format: date-time, description: Sender-only start time of the exact confirmed trip linked to a drive_end share; null for other modes. }
+        tripSessionMatchesCurrent: { type: [boolean, 'null'], description: Sender-only signal that the linked trip is still active and its original session and sharing epoch match this authenticated session; null for other modes. }
+        sharingEpoch: { type: integer, minimum: 1, description: Account sharing epoch stored on this share; compare against GET /me before resuming local evidence. }
     ShareEventRequest:
       type: object
       additionalProperties: false
@@ -2333,6 +2347,7 @@ components:
           type: array
           minItems: 1
           maxItems: 10
+          description: Destination samples must be post-share-start. Drive-end samples must match the linked trip session and epoch; moving samples may predate share creation, but stationary samples must be post-share-start.
           items: { $ref: '#/components/schemas/LocationSample' }
     ShareEventResult:
       type: object
@@ -2366,7 +2381,7 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, mode, status, createdAt, startedAt, expiresAt]
+            required: [id, mode, status, createdAt, startedAt, expiresAt, destination, tripId, tripStartedAt, tripSessionMatchesCurrent, sharingEpoch]
             properties:
               id: { type: string, format: uuid }
               mode: { type: string, enum: [time, destination, drive_end] }
@@ -2375,9 +2390,23 @@ components:
               startedAt: { type: string, format: date-time }
               expiresAt: { type: [string, 'null'], format: date-time }
               endedAt: { type: [string, 'null'], format: date-time }
-              endCondition: { type: string }
+              tripId: { type: [string, 'null'], format: uuid, description: Sender-only identifier of the exact trip linked to a drive_end share; null for other modes. }
+              tripStartedAt: { type: [string, 'null'], format: date-time, description: Sender-only start time of the exact linked drive_end trip; null for other modes. }
+              tripSessionMatchesCurrent: { type: [boolean, 'null'], description: True only when the linked trip is still active and its original authenticated session and sharing epoch still match this caller; null for other modes. }
+              sharingEpoch: { type: integer, minimum: 1, description: Epoch stored on this share; compare with GET /me before resuming local evidence. }
+              destination:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [latitude, longitude, radiusMeters]
+                    properties:
+                      latitude: { type: number, minimum: -90, maximum: 90 }
+                      longitude: { type: number, minimum: -180, maximum: 180 }
+                      radiusMeters: { type: integer, minimum: 50, maximum: 1000 }
+                  - type: 'null'
+              endCondition: { type: string, description: Human-readable terminal condition; drive_end states the five continuous minutes of credible stationary evidence required after confirmed driving. }
         nextCursor: { type: [string, 'null'] }
-      description: No field in this response contains the share secret, its digest, or a complete share URL.
+      description: Sender-only response. Destination data lets the owner resume local arrival monitoring after restart. For drive_end, tripId and tripStartedAt identify the exact linked trip; tripSessionMatchesCurrent and sharingEpoch let the owner decide whether local evidence can resume. Moving evidence may predate share creation only when tripSessionMatchesCurrent is true and the sample is at or after tripStartedAt. Stationary evidence and destination evidence remain post-share-start. These fields are never returned to the guest. No field contains the share secret, its digest, or a complete share URL.
     PublicFix:
       type: object
       additionalProperties: false
@@ -3005,13 +3034,14 @@ components:
     TripStopResult:
       type: object
       additionalProperties: false
-      required: [id, status, startedAt, endedAt, endReason]
+      required: [id, status, startedAt, endedAt, endReason, confirmedDrive]
       properties:
         id: { type: string, format: uuid }
         status: { type: string, const: ended }
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
         endReason: { type: string, enum: [arrived, cancelled, other, server_confirmed] }
+        confirmedDrive: { type: boolean, description: The caller's explicit driver confirmation stored by the server. }
     ApiError:
       type: object
       required: [error]

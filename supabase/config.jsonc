@@ -1,0 +1,16 @@
+{
+  "$schema": "https://supabase.com/schemas/config/v1.json",
+  "project_id": "opentrack360-ci",
+  "auth": {
+    "enable_signup": false
+  },
+  "db": {
+    "migrations": {
+      "enabled": true
+    },
+    "seed": {
+      "enabled": false,
+      "sql_paths": []
+    }
+  }
+}
