@@ -29,6 +29,18 @@ sealed interface CreateShareRequest {
     }
 }
 
+/** Enforces the API database's maximum time-share lifetime before a link is reviewed or created. */
+internal object TimeShareDurationPolicy {
+    const val MAX_DURATION_MINUTES = 43_200L
+
+    fun resolve(durationMinutes: String, now: Instant): Instant? {
+        val minutes = durationMinutes.toLongOrNull()
+            ?.takeIf { it in 1..MAX_DURATION_MINUTES }
+            ?: return null
+        return runCatching { now.plusSeconds(minutes * 60L) }.getOrNull()
+    }
+}
+
 enum class ShareMode(val wireValue: String) {
     TIME("time"),
     DESTINATION("destination"),

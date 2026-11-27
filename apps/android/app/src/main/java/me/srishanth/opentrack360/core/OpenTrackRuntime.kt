@@ -142,6 +142,7 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
         if (memberId != null) {
             arrivalShareTargets.clearFor(memberId)
             mutableDriveEndShares.value = mutableDriveEndShares.value.filterValues { it.memberId != memberId }
+            mutableDriveUpdate.value = null
             sharingPreferences.edit().remove(sessionKey(memberId)).commit()
         }
     }

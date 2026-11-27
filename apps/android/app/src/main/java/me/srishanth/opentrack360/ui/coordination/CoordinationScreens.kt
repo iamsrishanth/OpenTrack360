@@ -12,6 +12,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import java.util.UUID
+import java.util.Locale
 import androidx.compose.ui.unit.dp
 import me.srishanth.opentrack360.ui.components.DestructiveActionButton
 import me.srishanth.opentrack360.ui.components.ConsentActionButton
@@ -31,6 +32,8 @@ import me.srishanth.opentrack360.ui.model.NoShowRuleUi
 import me.srishanth.opentrack360.ui.model.PlaceArrivalUi
 import me.srishanth.opentrack360.ui.model.PlaceUi
 import me.srishanth.opentrack360.ui.safety.FeatureAvailabilityNotice
+import me.srishanth.opentrack360.tracking.DriveTrip
+import me.srishanth.opentrack360.tracking.TripRole
 
 data class PlacesUiState(
     val places: List<PlaceUi> = emptyList(),
@@ -728,12 +731,36 @@ data class DrivingReportUi(
 @Composable
 fun DrivingReportsScreen(
     reports: List<DrivingReportUi>,
+    latestLocalTrip: DriveTrip?,
     condition: DataCondition,
     message: String,
     onCorrectClassification: (tripId: String, classification: String) -> Unit,
 ) {
     MemberScreen(title = "Driving reports", subtitle = "Reports include only measurements available from this phone.") {
         StatusBanner(condition, "Drive history", message)
+        latestLocalTrip?.let { trip ->
+            MemberCard {
+                SectionHeading(if (trip.endedAt == null) "Current phone-measured drive" else "Latest phone-measured drive")
+                val role = when (trip.role) {
+                    TripRole.DRIVER -> "Driver · confirmed by you"
+                    TripRole.PASSENGER -> "Passenger · corrected by you"
+                    TripRole.UNCONFIRMED -> "Unconfirmed driver status"
+                }
+                LabeledValue("Classification", role)
+                LabeledValue("Duration", formatMeasuredDuration(trip.elapsedSeconds))
+                LabeledValue("Distance", String.format(Locale.getDefault(), "%.1f km", trip.distanceMeters / 1_000.0))
+                LabeledValue(
+                    "Average measured speed",
+                    trip.averageMeasuredSpeedMps?.let { String.format(Locale.getDefault(), "%.0f km/h", it * 3.6) } ?: "Unavailable",
+                )
+                LabeledValue(
+                    "Maximum measured speed",
+                    trip.maxMeasuredSpeedMps?.let { String.format(Locale.getDefault(), "%.0f km/h", it * 3.6) } ?: "Unavailable",
+                )
+                LabeledValue("Measured stops", trip.stopCount.toString())
+                Text("This phone-only summary is not included in the Circle report and is cleared when you sign out.")
+            }
+        }
         if (reports.isEmpty()) EmptyStateCard("No drive reports", "No measured drive reports are available.")
         reports.forEach { trip ->
             MemberCard {
@@ -748,4 +775,11 @@ fun DrivingReportsScreen(
             }
         }
     }
+}
+
+private fun formatMeasuredDuration(totalSeconds: Long): String {
+    val hours = totalSeconds.coerceAtLeast(0) / 3_600
+    val minutes = (totalSeconds.coerceAtLeast(0) % 3_600) / 60
+    val seconds = totalSeconds.coerceAtLeast(0) % 60
+    return if (hours > 0) "$hours hr $minutes min" else "$minutes min $seconds sec"
 }

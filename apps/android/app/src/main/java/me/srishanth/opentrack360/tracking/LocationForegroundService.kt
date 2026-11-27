@@ -503,10 +503,17 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private fun requestLocationUpdates(permission: PermissionSnapshot) {
         val manager = locationManager ?: return
         val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val candidates = if (hasFine) listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-            else listOf(LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
-        val provider = candidates.firstOrNull { candidate -> runCatching { manager.isProviderEnabled(candidate) }.getOrDefault(false) }
-        if (provider == null) {
+        val enabledProviders = try {
+            manager.getProviders(true).toSet()
+        } catch (_: SecurityException) {
+            invalidateAndStop(TrackingStatus.PERMISSION_LOST)
+            return
+        }
+        val providers = LocationProviderPolicy.select(
+            enabledProviders = enabledProviders,
+            precisePermission = hasFine && permission.precision == LocationPrecision.PRECISE,
+        )
+        if (providers.isEmpty()) {
             runtime?.onTrackingStatus?.invoke(TrackingStatus.LOCATION_UNAVAILABLE)
             updateNotification(TrackingStatus.LOCATION_UNAVAILABLE)
             return
@@ -519,12 +526,24 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             else -> PARKED_INTERVAL_MS
         }
         val minDistance = if (permission.precision == LocationPrecision.APPROXIMATE) APPROXIMATE_MIN_DISTANCE_METERS else PRECISE_MIN_DISTANCE_METERS
-        try {
-            manager.requestLocationUpdates(provider, interval, minDistance, this, Looper.getMainLooper())
-        } catch (_: SecurityException) {
+        var registeredProviders = 0
+        var permissionFailure = false
+        for (provider in providers) {
+            try {
+                manager.requestLocationUpdates(provider, interval, minDistance, this, Looper.getMainLooper())
+                registeredProviders++
+            } catch (_: SecurityException) {
+                permissionFailure = true
+            } catch (_: IllegalArgumentException) {
+                // An enabled provider can disappear between enumeration and registration.
+            }
+        }
+        if (registeredProviders > 0) return
+        if (permissionFailure) {
             invalidateAndStop(TrackingStatus.PERMISSION_LOST)
-        } catch (_: IllegalArgumentException) {
+        } else {
             runtime?.onTrackingStatus?.invoke(TrackingStatus.LOCATION_UNAVAILABLE)
+            updateNotification(TrackingStatus.LOCATION_UNAVAILABLE)
         }
     }
 

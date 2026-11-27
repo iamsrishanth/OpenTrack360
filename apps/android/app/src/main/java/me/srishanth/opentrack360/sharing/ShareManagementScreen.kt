@@ -176,17 +176,22 @@ fun ShareManagementScreen(
             ShareMode.TIME -> {
                 OutlinedTextField(
                     value = durationMinutes,
-                    onValueChange = { durationMinutes = it.filter(Char::isDigit).take(8) },
+                    onValueChange = { durationMinutes = it.filter(Char::isDigit).take(5) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Duration in minutes") },
+                    label = { Text("Duration in minutes (up to 43,200)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                 )
-                val previewExpiry = durationMinutes.toLongOrNull()?.takeIf { it > 0 }
-                    ?.let { runCatching { Instant.now().plusSeconds(it * 60) }.getOrNull() }
+                val enteredDuration = durationMinutes.toLongOrNull()
+                val previewExpiry = TimeShareDurationPolicy.resolve(durationMinutes, Instant.now())
                 Text(
-                    text = previewExpiry?.let { "Link ends ${LOCAL_FORMAT.format(it)}" }
-                        ?: "Enter a positive number of minutes.",
+                    text = when {
+                        enteredDuration == null || enteredDuration < 1 -> "Enter a positive number of minutes."
+                        enteredDuration > TimeShareDurationPolicy.MAX_DURATION_MINUTES ->
+                            "Time shares can run for up to 30 days."
+                        previewExpiry != null -> "Link ends ${LOCAL_FORMAT.format(previewExpiry)}"
+                        else -> "Enter a shorter duration."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -367,8 +372,8 @@ private fun selectedRequest(
     confirmedDriving: Boolean,
 ): CreateShareRequest? {
     return when (mode) {
-        ShareMode.TIME -> durationMinutes.toLongOrNull()?.takeIf { it > 0 }
-            ?.let { minutes -> runCatching { CreateShareRequest.UntilTime(Instant.now().plusSeconds(minutes * 60)) }.getOrNull() }
+        ShareMode.TIME -> TimeShareDurationPolicy.resolve(durationMinutes, Instant.now())
+            ?.let(CreateShareRequest::UntilTime)
         ShareMode.DESTINATION -> {
             val point = destination ?: return null
             val radius = radiusMeters.toIntOrNull()?.takeIf { it in 50..1000 } ?: return null

@@ -151,7 +151,7 @@ class TrackingEngineTest {
     }
 
     @Test
-    fun linkedTripAcceptsDriveEndFixtureMovementPairBeforeShareWithinClientWindow() {
+    fun linkedTripAcceptsConfirmedDriveEndContractExample() {
         val movement = listOf(
             sample(-120, speed = 9.2, lon = 0.0, accuracy = 12.0),
             sample(-60, speed = 9.2, lon = 0.005, accuracy = 10.0),
@@ -172,6 +172,29 @@ class TrackingEngineTest {
         assertEquals(8, evidence.size)
         assertEquals(movement.map { it.sampleId }, evidence.take(2).map { it.sampleId })
         assertTrue(DriveEndEvidencePolicy.isSufficient(evidence))
+    }
+
+    @Test
+    fun linkedTripKeepsNineMinuteMovementToStopContractExamplePending() {
+        val movement = listOf(
+            sample(-600, speed = 9.2, lon = 0.0, accuracy = 12.0),
+            sample(-540, speed = 9.2, lon = 0.005, accuracy = 10.0),
+        )
+        val stationary = (0L..300L step 60L).map { second ->
+            sample(second, speed = 0.0, lon = 0.005, accuracy = 10.0)
+        }
+
+        val evidence = DriveEndEvidencePolicy.forLinkedTrip(
+            evidenceFixes = movement + stationary,
+            shareStartedAt = BASE,
+            tripStartedAt = BASE.minusSeconds(30 * 60),
+            tripSessionMatchesCurrent = true,
+            currentSharingEpoch = 1,
+            shareSharingEpoch = 1,
+        )
+
+        assertTrue(evidence.isEmpty())
+        assertFalse(DriveEndEvidencePolicy.isSufficient(movement + stationary))
     }
 
     @Test

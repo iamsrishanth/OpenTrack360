@@ -30,8 +30,22 @@ object SosAcknowledgementPolicy {
     }
 }
 
+object EmergencyContactInviteIdPolicy {
+    private val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+    fun normalize(value: String): String? {
+        val trimmed = value.trim()
+        if (!UUID_PATTERN.matches(trimmed)) return null
+        return runCatching { java.util.UUID.fromString(trimmed).toString() }.getOrNull()
+    }
+}
+
 data class SosUiState(
     val recipients: List<SosRecipientUi> = emptyList(),
+    val pendingInviteIdToShare: String? = null,
+    val pendingInviteRecipientUsername: String? = null,
+    val inviteIdToAccept: String = "",
+    val inviteAcceptanceMessage: String? = null,
     val condition: DataCondition = DataCondition.UNKNOWN,
     val deliveryState: String? = null,
     val alertId: String? = null,
@@ -50,6 +64,9 @@ fun SosScreen(
     onCreateSos: (cancelCountdownSeconds: Int) -> Unit,
     onAcknowledgeSos: (sosId: String) -> Unit,
     onInviteEmergencyContact: () -> Unit,
+    onShareInviteId: (inviteId: String) -> Unit,
+    onInviteIdToAcceptChange: (String) -> Unit,
+    onAcceptEmergencyContactInvite: () -> Unit,
 ) {
     MemberScreen(title = "Circle SOS", subtitle = "An in-app request for help from people you choose.") {
         StatusBanner(
@@ -68,6 +85,34 @@ fun SosScreen(
                 LabeledValue(person.name, "Invitation pending")
             }
             PrimaryAction("Invite an emergency contact", onInviteEmergencyContact, Modifier.fillMaxWidth())
+        }
+
+        state.pendingInviteIdToShare?.let { inviteId ->
+            MemberCard {
+                SectionHeading("Share the invitation ID")
+                Text("Send this ID to ${state.pendingInviteRecipientUsername ?: "the invited recipient"}. It is not a credential; only the invited signed-in account can accept it.")
+                LabeledValue("Invitation ID", inviteId)
+                PrimaryAction("Share invitation ID", { onShareInviteId(inviteId) }, Modifier.fillMaxWidth())
+            }
+        }
+
+        MemberCard {
+            SectionHeading("Accept an invitation")
+            Text("Paste the invitation ID from the person who invited you. Acceptance is checked against your signed-in account.")
+            OutlinedTextField(
+                value = state.inviteIdToAccept,
+                onValueChange = onInviteIdToAcceptChange,
+                label = { Text("Invitation ID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            state.inviteAcceptanceMessage?.let { Text(it) }
+            PrimaryAction(
+                "Accept emergency-contact invitation",
+                onAcceptEmergencyContactInvite,
+                Modifier.fillMaxWidth(),
+                enabled = state.inviteIdToAccept.isNotBlank(),
+            )
         }
 
         state.errorMessage?.let {
@@ -209,41 +254,46 @@ fun AccountPrivacyScreen(
         }
         MemberCard {
             SectionHeading("Guardian consent")
-            Text("This flow supports a child account and an already-provisioned, verified guardian account. Other age or guardian verification flows are unavailable.")
             if (!state.guardian.verifiedGuardianAccountAvailable) {
-                StatusBanner(DataCondition.UNAVAILABLE, "Guardian verification unavailable", "A verified guardian account has not been confirmed by the app.")
-            }
-            OutlinedTextField(
-                state.guardian.childMemberId,
-                onGuardianChildIdChange,
-                label = { Text("Child member ID") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                state.guardian.guardianUsername,
-                onGuardianUsernameChange,
-                label = { Text("Guardian username") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text("Relationship")
-            listOf("parent", "guardian").forEach { relationship ->
-                FilterChip(
-                    selected = state.guardian.relationship == relationship,
-                    onClick = { onGuardianRelationshipChange(relationship) },
-                    label = { Text(relationship.replaceFirstChar { it.uppercase() }) },
+                StatusBanner(
+                    DataCondition.UNAVAILABLE,
+                    "Guardian consent unavailable",
+                    "The API does not yet provide a verified guardian identity and recipient approval flow.",
+                )
+            } else {
+                Text("This flow supports a child account and an already-provisioned, verified guardian account.")
+                OutlinedTextField(
+                    state.guardian.childMemberId,
+                    onGuardianChildIdChange,
+                    label = { Text("Child member ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    state.guardian.guardianUsername,
+                    onGuardianUsernameChange,
+                    label = { Text("Guardian username") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Relationship")
+                listOf("parent", "guardian").forEach { relationship ->
+                    FilterChip(
+                        selected = state.guardian.relationship == relationship,
+                        onClick = { onGuardianRelationshipChange(relationship) },
+                        label = { Text(relationship.replaceFirstChar { it.uppercase() }) },
+                    )
+                }
+                state.guardian.requestMessage.takeIf(String::isNotBlank)?.let {
+                    StatusBanner(state.guardian.requestCondition, "Consent request", it)
+                }
+                PrimaryAction(
+                    "Request guardian consent",
+                    { onRequestGuardianConsent(state.guardian.childMemberId, state.guardian.guardianUsername, state.guardian.relationship) },
+                    Modifier.fillMaxWidth(),
+                    state.guardian.childMemberId.isNotBlank() && state.guardian.guardianUsername.isNotBlank(),
                 )
             }
-            state.guardian.requestMessage.takeIf(String::isNotBlank)?.let {
-                StatusBanner(state.guardian.requestCondition, "Consent request", it)
-            }
-            PrimaryAction(
-                "Request guardian consent",
-                { onRequestGuardianConsent(state.guardian.childMemberId, state.guardian.guardianUsername, state.guardian.relationship) },
-                Modifier.fillMaxWidth(),
-                state.guardian.childMemberId.isNotBlank() && state.guardian.guardianUsername.isNotBlank() && state.guardian.verifiedGuardianAccountAvailable,
-            )
         }
         PrimaryAction("Open help", onOpenHelp, Modifier.fillMaxWidth())
         TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }

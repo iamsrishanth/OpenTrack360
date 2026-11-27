@@ -60,6 +60,7 @@ import me.srishanth.opentrack360.sharing.ShareManagementScreen
 import me.srishanth.opentrack360.pets.reminders.PetRoutineReminderScheduler
 import me.srishanth.opentrack360.pets.reminders.PetRoutineReminderSpec
 import me.srishanth.opentrack360.tracking.AndroidPermissionProbe
+import me.srishanth.opentrack360.tracking.DriveUpdate
 import me.srishanth.opentrack360.tracking.LocationPrecision
 import me.srishanth.opentrack360.tracking.TrackingServiceController
 import me.srishanth.opentrack360.tracking.TrackingStartResult
@@ -138,6 +139,7 @@ import me.srishanth.opentrack360.ui.pets.PublicPetRecoveryScreen
 import me.srishanth.opentrack360.ui.pets.PublicPetRecoveryUiState
 import me.srishanth.opentrack360.ui.safety.AccountPrivacyScreen
 import me.srishanth.opentrack360.ui.safety.AccountPrivacyUiState
+import me.srishanth.opentrack360.ui.safety.EmergencyContactInviteIdPolicy
 import me.srishanth.opentrack360.ui.safety.PermissionDiagnosticsScreen
 import me.srishanth.opentrack360.ui.safety.SafetyAvailabilityScreen
 import me.srishanth.opentrack360.ui.safety.SosRecipientUi
@@ -183,6 +185,14 @@ fun OpenTrackAppRoot(
     val scope = rememberCoroutineScope()
     val petReminderScheduler = remember(activity.applicationContext) { PetRoutineReminderScheduler(activity.applicationContext) }
     val trackingStatus by runtime.trackingStatus.collectAsState()
+    val latestDriveUpdate by runtime.latestDriveUpdate.collectAsState()
+    val latestLocalDriveTrip = when (val update = latestDriveUpdate) {
+        is DriveUpdate.Started -> update.trip
+        is DriveUpdate.Progress -> update.trip
+        is DriveUpdate.Ended -> update.trip
+        is DriveUpdate.RoleCorrected -> update.trip
+        null -> null
+    }
     var session by remember { mutableStateOf<MemberSession?>(null) }
     var profile by remember { mutableStateOf<MemberProfile?>(null) }
     var access by remember { mutableStateOf<MemberAccessState>(MemberAccessState.SignedOut) }
@@ -193,6 +203,8 @@ fun OpenTrackAppRoot(
     var inviteAcceptError by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf(PasswordFormUiState()) }
     var accountMessage by remember { mutableStateOf<String?>(null) }
+    var deletionReason by remember { mutableStateOf("privacy_concern") }
+    var deletionDetails by remember { mutableStateOf("") }
     var reminderNotificationsEnabled by remember { mutableStateOf<Boolean?>(null) }
     var circleState by remember { mutableStateOf(CircleHomeUiState()) }
     var selectedCircleId by remember { mutableStateOf<String?>(null) }
@@ -948,6 +960,33 @@ fun OpenTrackAppRoot(
         }
     }
 
+    fun acceptEmergencyContactInvite() {
+        val inviteId = EmergencyContactInviteIdPolicy.normalize(sosState.inviteIdToAccept)
+        if (inviteId == null) {
+            sosState = sosState.copy(inviteAcceptanceMessage = "Enter the UUID from the invitation message.")
+            return
+        }
+        sosState = sosState.copy(inviteAcceptanceMessage = "Checking the invitation for your signed-in account…")
+        scope.launch {
+            runCatching {
+                val response = runtime.api.memberRequest("POST", "emergency-contact-invites/$inviteId/accept")
+                val result = response.optJSONObject("data") ?: response
+                require(result.optBoolean("accepted")) { "The invitation could not be accepted by this account." }
+                result.optString("circleId").uuidSegment()
+            }.onSuccess { acceptedCircleId ->
+                sosState = sosState.copy(
+                    inviteIdToAccept = "",
+                    inviteAcceptanceMessage = "Invitation accepted. You can now receive SOS alerts configured by that Circle.",
+                )
+                if (selectedCircleId == acceptedCircleId) reloadHome++
+            }.onFailure { error ->
+                sosState = sosState.copy(
+                    inviteAcceptanceMessage = error.message ?: "The emergency-contact invitation could not be accepted.",
+                )
+            }
+        }
+    }
+
     LaunchedEffect(sosCountdownGeneration) {
         val generation = sosCountdownGeneration
         if (generation == 0) return@LaunchedEffect
@@ -1232,14 +1271,16 @@ fun OpenTrackAppRoot(
                             username = session!!.username,
                             sessionStateLabel = "Signed in",
                             sharingSummary = if (runtime.sharingIsEnabled(session!!.memberId)) "Location collection enabled on this device" else "Location collection off",
+                            deletionReason = deletionReason,
+                            deletionDetails = deletionDetails,
                         ),
                         onRequestDataExport = {
                             scope.launch { runCatching { runtime.api.memberRequest("POST", "privacy/export") }
                                 .onSuccess { accountMessage = "Your data export request was accepted." }
                                 .onFailure { accountMessage = it.message ?: "Export request failed." } }
                         },
-                        onDeletionReasonChange = {},
-                        onDeletionDetailsChange = {},
+                        onDeletionReasonChange = { deletionReason = it },
+                        onDeletionDetailsChange = { deletionDetails = it.take(500) },
                         onRequestAccountDeletion = { reason, details, phrase ->
                             scope.launch {
                                 runCatching {
@@ -1247,7 +1288,10 @@ fun OpenTrackAppRoot(
                                         "privacy/deletion",
                                         JSONObject().put("reason", reason).put("details", details).put("confirmationPhrase", phrase),
                                     )
-                                }.onSuccess { accountMessage = "Deletion request accepted. This request does not mean deletion has completed." }
+                                }.onSuccess {
+                                    deletionDetails = ""
+                                    accountMessage = "Deletion request accepted. This request does not mean deletion has completed."
+                                }
                                     .onFailure { accountMessage = it.message ?: "Deletion request failed." }
                             }
                         },
@@ -1271,6 +1315,9 @@ fun OpenTrackAppRoot(
                             session = null
                             profile = null
                             access = MemberAccessState.SignedOut
+                            deletionReason = "privacy_concern"
+                            deletionDetails = ""
+                            sosState = SosUiState()
                             page = AppPage.CIRCLES
                         },
                     )
@@ -1725,7 +1772,10 @@ fun OpenTrackAppRoot(
                         },
                     )
                     AppPage.DRIVING -> DrivingReportsScreen(
-                        reports = drivingReports, condition = DataCondition.CONFIRMED, message = "Reports use only measurements available from your phone.",
+                        reports = drivingReports,
+                        latestLocalTrip = latestLocalDriveTrip,
+                        condition = DataCondition.CONFIRMED,
+                        message = "Circle reports include only fields provided by the API. This phone also shows its latest measured trip below.",
                         onCorrectClassification = { id, classification ->
                             val circleId = selectedCircleId ?: return@DrivingReportsScreen
                             scope.launch { runCatching { runtime.api.memberPatch("circles/${circleId.uuidSegment()}/driving/trips/${id.uuidSegment()}", JSONObject().put("classification", classification)) }
@@ -1919,6 +1969,19 @@ fun OpenTrackAppRoot(
                             }
                         },
                         onInviteEmergencyContact = { showEmergencyInviteDialog = true },
+                        onShareInviteId = { inviteId ->
+                            val recipient = sosState.pendingInviteRecipientUsername ?: "the invited member"
+                            shareText(
+                                activity,
+                                "OpenTrack360 emergency-contact invitation for $recipient\n\n" +
+                                    "Invitation ID: $inviteId\n\n" +
+                                    "Sign in to OpenTrack360 as the invited account, open Circle SOS, paste this ID under Accept an invitation, and accept. Only the invited account can accept it.",
+                            )
+                        },
+                        onInviteIdToAcceptChange = { value ->
+                            sosState = sosState.copy(inviteIdToAccept = value.take(36), inviteAcceptanceMessage = null)
+                        },
+                        onAcceptEmergencyContactInvite = { acceptEmergencyContactInvite() },
                     )
                     AppPage.SAFETY -> SafetyAvailabilityScreen(
                         permissions = permissionDiagnostics(activity),
@@ -1979,8 +2042,17 @@ fun OpenTrackAppRoot(
                             .put("recipientUsername", username)) }
                             .onSuccess { result ->
                                 val item = result.optJSONObject("data") ?: result
-                                sosState = sosState.copy(recipients = sosState.recipients + SosRecipientUi(item.optString("recipientMemberId"), item.optString("recipientUsername", username), false, "in-app · pending acceptance"))
-                                accountMessage = "Invitation sent. The contact must accept before receiving SOS alerts."
+                                val inviteId = EmergencyContactInviteIdPolicy.normalize(item.optString("id"))
+                                sosState = sosState.copy(
+                                    recipients = sosState.recipients + SosRecipientUi(item.optString("recipientMemberId"), item.optString("recipientUsername", username), false, "in-app · pending acceptance"),
+                                    pendingInviteIdToShare = inviteId,
+                                    pendingInviteRecipientUsername = username,
+                                )
+                                accountMessage = if (inviteId == null) {
+                                    "Invitation created, but the API did not return a valid invitation ID to share."
+                                } else {
+                                    "Invitation sent. Share its ID with $username so they can accept; they must accept before receiving SOS alerts."
+                                }
                             }
                             .onFailure { accountMessage = it.message ?: "Emergency contact invitation failed." }
                     }

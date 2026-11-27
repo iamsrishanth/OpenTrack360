@@ -22,9 +22,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        guestRequest = DeepLinkRouter.fromColdStart(intent)
-        petRecoveryRequest = PetRecoveryLinkParser.fromIntent(intent)
-        circleInviteRequest = CircleInviteLinkParser.fromIntent(intent)
+        routeIncomingIntent(intent)
         setContent {
             OpenTrackTheme {
                 OpenTrackAppRoot(
@@ -43,9 +41,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        guestRequest = DeepLinkRouter.fromNewIntent(intent)
-        petRecoveryRequest = PetRecoveryLinkParser.fromIntent(intent)
-        circleInviteRequest = CircleInviteLinkParser.fromIntent(intent)
+        routeIncomingIntent(intent)
+    }
+
+    private fun routeIncomingIntent(incoming: Intent?) {
+        guestRequest = DeepLinkRouter.fromColdStart(incoming)
+        petRecoveryRequest = PetRecoveryLinkParser.fromIntent(incoming)
+        circleInviteRequest = CircleInviteLinkParser.fromIntent(incoming)
+
+        // Keep only the validated transient request in Compose state. The Activity's retained
+        // launch Intent must not keep a share, invite, or recovery secret after parsing.
+        setIntent(
+            if (incoming?.action == Intent.ACTION_VIEW) {
+                Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
+            } else {
+                incoming ?: Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
+            },
+        )
     }
 }
