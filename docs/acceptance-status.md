@@ -2,60 +2,55 @@
 
 **Snapshot date:** 27 November 2026
 
-**Web branch:** `teams/web-platform`
+**Merged PR:** [#2](https://github.com/iamsrishanth/OpenTrack360/pull/2)
 
-**Tested implementation revision:** `4e02b168226fe43cd77e5ea6202e862289a727e6`
-**Pull request:** [#2, Expose drive-end trip evidence scope](https://github.com/iamsrishanth/OpenTrack360/pull/2) (draft)
+**Web implementation:** `510dc92572e5838aa525d68e243e9fa569824501`
 
-This is a dated evidence snapshot, not a claim that the complete production acceptance plan has passed. Re-run the probes after a deployment or database change.
+**Production merge/deployment:** `485fddc716aa098076be600645b69b0cd4f044b7`
 
-## Deployments and live route probes
+This records production deployment and hosted migration evidence. Signed-in end-to-end acceptance still needs disposable member credentials in an isolated test environment.
 
-| Surface | Observed result | What this proves |
+## Production deployment and route probes
+
+The existing Vercel project `opentrack360` serves `track.srishanth.me`. The Vercel production deployment for merge commit `485fddc716aa098076be600645b69b0cd4f044b7` is READY and has aliases `track.srishanth.me`, `opentrack360.vercel.app`, and the main-branch Vercel host. The deployment URL is [opentrack360-ey04pje5g-srishanths-projects.vercel.app](https://opentrack360-ey04pje5g-srishanths-projects.vercel.app).
+
+| Production request | Observed result | What it proves |
 | --- | --- | --- |
-| Production `https://track.srishanth.me/` | HTTP 200; deployment uses `main` revision `45dbe9f56383179f1227d3eed90b1690fa562271` | The custom-domain site is serving HTML. |
-| Production `GET /api/v1/me` without a bearer token | HTTP 401 with generic `unauthorized` response | The versioned route is present and rejects an unauthenticated caller. It does not prove a database-backed member flow. |
-| Production `GET /api/v1/admin/accounts` without an admin session | HTTP 401; `Cache-Control: no-store` | The account-management API rejects a signed-out caller. |
-| Production `GET /api/v1/shares` without a member bearer token | HTTP 401; `Cache-Control: no-store, private` | The sender-only share list is not available to a signed-out caller. |
-| Production `GET /api/v1/public/shares/00000000-0000-4000-8000-000000000000` | HTTP 404 with generic `NOT_FOUND` response | An unknown share ID returns no location. It does not prove a valid share flow. |
-| Production `/s/00000000-0000-4000-8000-000000000000` | HTTP 200 guest-viewer shell; `Cache-Control: private, no-store`; `Referrer-Policy: no-referrer`; `X-Robots-Tag: noindex, nofollow, noarchive` | The viewer shell loads without exposing a location; data still requires the fragment secret in the bearer header. |
-| Production `/admin` | HTTP 200 login shell; `Referrer-Policy: no-referrer`; `X-Robots-Tag: noindex, nofollow, noarchive` | The public HTML contains the sign-in shell only. Account data is requested from the separately authenticated, no-store API. |
-| Production `GET /.well-known/assetlinks.json` | HTTP 200, body `[]` | The file is served, but no Android package/signing association is configured. |
-| Vercel preview for `teams/web-platform` | READY at [opentrack360-7zke816bw-srishanths-projects.vercel.app](https://opentrack360-7zke816bw-srishanths-projects.vercel.app), revision `4e02b168226fe43cd77e5ea6202e862289a727e6` | Vercel built this source revision. The deployment is SSO-protected and is not evidence of production database acceptance. |
+| `GET /` | HTTP 200 | The public site is serving. |
+| `GET /admin` | HTTP 200; `X-Robots-Tag: noindex, nofollow, noarchive`; `Referrer-Policy: no-referrer` | The admin login shell loads without granting access to account data. |
+| `GET /s/00000000-0000-0000-0000-000000000000` | HTTP 200; private no-store; no-referrer; noindex | Guest viewer shell loads without a share credential or location. |
+| `GET /p/00000000-0000-0000-0000-000000000000` | HTTP 200; private no-store; no-referrer; noindex | Pet recovery shell loads without revealing pet details. |
+| `GET /i` | HTTP 200 | Circle invitation landing route is deployed. |
+| `GET /api/v1/me` without bearer | HTTP 401; no-store | Member API rejects a signed-out caller. |
+| `GET /api/v1/admin/accounts` without admin session | HTTP 401; no-store | Account administration API rejects a signed-out caller. |
+| `GET /api/v1/shares` without member bearer | HTTP 401; private no-store | Sender-only share list rejects a signed-out caller. |
+| `GET /api/v1/public/shares/{unknown-id}` without bearer | HTTP 404; private no-store; noindex | A public ID by itself returns no location. |
+| Same unknown share request with an invalid bearer value | HTTP 404; private no-store; noindex | A bad secret returns no location. The secret was sent only in the header, not the URL. |
+| `GET /.well-known/assetlinks.json` | HTTP 200; body `[]` | The association file is served, but Android release association is not configured. |
 
-The Vercel checks on PR #2 are green: `Vercel` and `Vercel Preview Comments`. The Supabase database workflow is also green for this revision: [run 45910941279](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45910941279). The current production deployment is still on the merged `main` revision above; the preview revision has not been promoted.
+The post-deployment Vercel runtime error scan found no error clusters in the preceding hour. These route probes verify shell and signed-out behavior; they do not substitute for valid-member or valid-share flows.
 
-## Checks recorded for the web revision
+## Supabase hosted database
 
-- `npm run test:api`: 22/22 passing.
-- `npm run typecheck`: passing.
-- Redocly lint for `contracts/openapi.yaml`: passing.
-- All 118 JSON example files parsed successfully.
-- `git diff --check`: clean at the implementation checkpoint.
-- `npm audit --audit-level=high`: no high or critical findings.
-- Vercel preview build: READY; both GitHub preview checks pass.
-- Migration `20261127000300_opentrack_sos_trip_share_resume.sql` executed in temporary PGlite against minimal local schemas and synthetic function definitions. Its 17 exact source-fragment replacements applied across the dispatcher (8), share creation (1), share event validation (7), and share list (1). This checks migration patch preconditions and SQL installation in the harness; it does not validate the target Supabase schema or execute the patched business flows.
-- GitHub Actions run `45910941279` started a fresh Supabase local stack, applied all eight migrations (including `20261127000300` and `20261127000400`) with `supabase db reset`, then ran `supabase test db`: 100/100 pgTAP assertions passed. This is migration and database-function evidence against the clean local Supabase stack. It does not establish compatibility with the existing hosted Supabase project's schema, migration ledger, or data.
-- Migration `20261127000400_opentrack_share_trip_start_projection.sql` also executed in a temporary PGlite harness with synthetic rows. Create/list returned the linked trip ID, start time, session-match boolean and epoch; mismatched session or epoch returned `false`. The full local Supabase run now supersedes that harness as migration evidence, while the harness remains a focused projection check.
+The ignored local `.env.local` targets the existing Supabase Free project `OpenTrack360` (`oxfcxucpzrvbifefnwvp`). Supabase CLI 3.4.0 was authenticated and linked to that project. Secret values were not printed or committed.
 
-## Database and signed-in acceptance still pending
+The hosted database already contained the OpenTrack360 private schema, but it had no migration ledger. Before changing the ledger, read-only checks verified the existing structures and function markers for the first six repository migrations. Those six versions were reconciled as already applied with `supabase migration repair`; migrations `20261127000300` and `20261127000400` were then applied with `supabase db push`. `supabase migration list --remote` now reports all eight repository migrations applied. The last two migrations are committed in the merged revision.
 
-The 100 assertions passed against the clean local Supabase stack in GitHub Actions. The existing hosted Supabase project's migration ledger and schema remain unavailable, and migrations `20261127000300` and `20261127000400` have not been verified or applied there. No two-account, hosted API flow has been run against an isolated Supabase project.
+Read-only checks after the push confirm the new trip session and sharing-epoch fields, SOS notification linkage, indexes, and sender-only share projection. Auth settings report `disable_signup=true`, `mailer_autoconfirm=false`, and `phone_autoconfirm=false`. All 25 tables in the private schema have RLS enabled, and the `anon` and `authenticated` roles have no direct table `SELECT` grants. The one-time administrator bootstrap is consumed and an active platform-administrator record exists; no account identity or credential was read.
 
-The Windows workspace has no Supabase CLI, `psql`, Docker, local Supabase access token, direct database URL, or Supabase MCP connection. The GitHub Actions runner supplies the CLI and Docker for the isolated local test stack. Do not treat that local stack, production route probes, or the PGlite harness as a substitute for checking the current hosted project schema and applying migrations there.
+## Build and test evidence
 
-Vercel environment-variable names currently listed for **production** are `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `OPENTRACK_AUTH_EMAIL_DOMAIN`, and `NEXT_PUBLIC_SITE_URL`. Secret values were not read. No environment variables were listed for preview branch `teams/web-platform`; configure preview only with isolated database credentials and synthetic fixtures. `OPENTRACK_ADMIN_BOOTSTRAP_SECRET` is documented in `.env.example` and the web README but is not present in the current Vercel variable list. Confirm that the one-time bootstrap has already completed; otherwise configure the one-time secret, bootstrap the first administrator, then remove it.
+- `npm run test:api`: 22/22 passed.
+- `npm run typecheck`: passed.
+- `npm run build`: passed and generated the guest share, pet recovery, invitation, admin, and versioned API routes.
+- Redocly lint for `contracts/openapi.yaml`: passed; all 118 contract JSON examples parsed.
+- The post-merge [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45947182673) applied all eight migrations to a fresh local Supabase stack and passed all 100 pgTAP assertions.
+- The production Vercel deployment is READY for merge commit `485fddc716aa098076be600645b69b0cd4f044b7`; the Vercel and Vercel Preview Comments checks passed before merge.
 
-Required evidence before production database acceptance:
+## Remaining acceptance and provider prerequisites
 
-1. Use an isolated Supabase project or branch with two disposable member accounts in separate Circles and synthetic share data.
-2. Inspect its schema and migration ledger, apply compatible migrations, and run the current 100-assertion pgTAP suite.
-3. Exercise signed-in provisioning, password rotation/reset/disable, Circle isolation, location ingest, link creation/revocation, and the web/native guest view using those synthetic records.
-4. Only then assess promotion of the tested revision and any production migration plan against the actual production schema and existing data.
-
-## Android and provider prerequisites
-
-- Release App Links remain unavailable: `assetlinks.json` is empty and the Android release signing SHA-256 has not been supplied. Do not add the debug certificate to production.
-- FCM delivery remains unavailable until Firebase server credentials and an opted-in test device are configured and receipt is verified.
-- Weather and flight feeds remain disabled because no free source with suitable product rights for this use has been confirmed. The dependency and map-provider notes are in [feature scope](feature-scope.md).
-- The current Android integration branch and the release-signed share-sheet/native/browser acceptance are separate from the Vercel web preview; complete them with the Android release build once its signing identity is available.
+- No signed-in account flow or valid guest share was exercised: there are no disposable member credentials in this session, and the `teams/web-platform` Vercel preview has no environment variables. The production environment has the five server variables `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `OPENTRACK_AUTH_EMAIL_DOMAIN`, and `NEXT_PUBLIC_SITE_URL`; their secret values were not read.
+- The Supabase project has no preview branch. [Supabase deployment guidance](https://supabase.com/docs/guides/deployment) says preview branching requires the Pro plan, which would add cost; no paid branch or additional project was created. Provide an isolated zero-cost test project and two synthetic member accounts, or specify another safe test environment, to run provisioning, password rotation/disable, Circle isolation, location ingest, valid link revocation, and valid guest reads. No production member records were used as test data.
+- App Links need the release package signing SHA-256 for `me.srishanth.opentrack360`. `assetlinks.json` is currently empty. Do not publish the debug signing certificate.
+- FCM receipt testing needs Firebase server credentials and an opted-in test device.
+- Weather and flight feeds remain unavailable until a free commercial source suitable for this product is confirmed. The map uses MapLibre with OpenFreeMap; attribution is required, there is no SLA, and tile requests disclose the viewed map area to the tile provider. See [feature scope](feature-scope.md).
