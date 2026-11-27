@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - "supabase/**"
+      - "contracts/examples/**"
+      - "scripts/generate-drive-end-pgtap.mjs"
       - ".github/workflows/supabase-database.yml"
   push:
     branches:
       - main
     paths:
       - "supabase/**"
+      - "contracts/examples/**"
+      - "scripts/generate-drive-end-pgtap.mjs"
       - ".github/workflows/supabase-database.yml"
 
 permissions:
@@ -25,6 +29,12 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 3.4.0
+
+      - name: Generate drive-end tests from contract fixtures
+        run: node scripts/generate-drive-end-pgtap.mjs
+
+      - name: Verify generated drive-end tests are committed
+        run: git diff --exit-code -- supabase/tests/drive_end_contract_examples.sql
 
       - name: Start isolated local Supabase stack
         run: supabase start
