@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createApiDispatcher } from "../../src/server/api/dispatcher";
 import { createDefaultApiServices } from "../../src/server/api/rpc";
+import { validateBodyForRoute } from "../../src/server/api/validation";
 import type { ApiServices, MemberContext, RpcEnvelope } from "../../src/server/api/types";
 
 const member: MemberContext = {
@@ -697,6 +699,58 @@ test("share event evidence is delegated for server confirmation, not ended local
   assert.equal(events[0]?.clientEventId, body.clientEventId);
   const invalid = await dispatch(request("/shares/f28bd481-5c3c-4ea1-9fa1-0384703c23b0/events", "POST", { ...body, evidenceFixes: [] }, { authorization: "Bearer session" }));
   assert.equal(invalid.status, 400);
+});
+
+test("drive-end contract examples pass API validation and preserve their expected outcomes", async () => {
+  const examplesUrl = new URL("../../../../contracts/examples/", import.meta.url);
+  const fixtures = [
+    {
+      name: "nine-minute gap",
+      request: JSON.parse(readFileSync(new URL("share-event-drive-end.request.json", examplesUrl), "utf8")),
+      expected: JSON.parse(readFileSync(new URL("share-event-drive-end.pending.response.json", examplesUrl), "utf8")),
+      transitionSeconds: 540,
+    },
+    {
+      name: "valid five-minute stop",
+      request: JSON.parse(readFileSync(new URL("share-event-drive-end.confirmed.request.json", examplesUrl), "utf8")),
+      expected: JSON.parse(readFileSync(new URL("share-event-drive-end.confirmed.response.json", examplesUrl), "utf8")),
+      transitionSeconds: 60,
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const body = validateBodyForRoute("share-event", fixture.request);
+    assert.deepEqual(body, fixture.request, `${fixture.name} should pass the API request validator`);
+
+    const moving = fixture.request.evidenceFixes
+      .filter((fix: any) => fix.speedMps !== null && fix.speedMps >= 5 && fix.speedMps <= 55 && fix.accuracyMeters <= 50)
+      .sort((left: any, right: any) => Date.parse(left.capturedAt) - Date.parse(right.capturedAt));
+    const stationary = fixture.request.evidenceFixes
+      .filter((fix: any) => fix.speedMps !== null && fix.speedMps <= 1.5 && fix.accuracyMeters <= 50)
+      .sort((left: any, right: any) => Date.parse(left.capturedAt) - Date.parse(right.capturedAt));
+    const transitionSeconds = (Date.parse(stationary[0].capturedAt) - Date.parse(moving.at(-1).capturedAt)) / 1000;
+    const stationarySpanSeconds = (Date.parse(stationary.at(-1).capturedAt) - Date.parse(stationary[0].capturedAt)) / 1000;
+
+    assert.equal(transitionSeconds, fixture.transitionSeconds, `${fixture.name} should keep its intended continuity gap`);
+    assert.ok(moving.length >= 2, `${fixture.name} needs a confirmed movement pair`);
+    assert.ok(stationary.length >= 2, `${fixture.name} needs stationary evidence`);
+    assert.ok(stationarySpanSeconds >= 300, `${fixture.name} must contain at least five continuous stationary minutes`);
+    assert.equal(fixture.expected.clientEventId, fixture.request.clientEventId);
+
+    let submittedPayload: unknown;
+    const dispatch = createApiDispatcher(services({
+      submitShareEvent: async (_context, _shareId, submitted) => {
+        submittedPayload = submitted;
+        return ok(fixture.expected);
+      },
+    }));
+    const response = await dispatch(request("/shares/f28bd481-5c3c-4ea1-9fa1-0384703c23b0/events", "POST", body, { authorization: "Bearer session" }));
+    assert.equal(response.status, 200);
+    assert.deepEqual(submittedPayload, body, `${fixture.name} should reach the event service unchanged`);
+    const result = await json(response);
+    assert.equal(result.status, fixture.expected.status);
+    assert.equal(result.reason, fixture.expected.reason);
+  }
 });
 
 test("software-only pet recovery requires the fragment secret and strips non-approved fields", async () => {
