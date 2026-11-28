@@ -1,6 +1,6 @@
 # Shared contract fixtures
 
-These JSON files are deterministic, synthetic examples for Android and web clients. They describe the wire format; token strings, IDs, and Mumbai-area coordinates are test data and must never be treated as credentials or real member records.
+These JSON files are deterministic, synthetic examples for Android and web clients. They describe the wire format; token strings, IDs, and Mumbai-area coordinates are test data and must never be treated as credentials or real member records. Fragment values in secret-bearing example URLs use the fixed `EXAMPLE_ONLY_NOT_A_SECRET_DO_NOT_USE_000000` marker and are not usable credentials.
 
 API base: `https://track.srishanth.me/api/v1`
 
