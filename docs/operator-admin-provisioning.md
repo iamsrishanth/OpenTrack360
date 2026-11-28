@@ -66,3 +66,16 @@ using the account. Use the normal website account-provisioning flow for
 disposable synthetic member accounts. Keep the operator credential file outside
 Git and remove the synthetic operator and test accounts only after Android
 device acceptance has been acknowledged.
+
+## Google-only website administrator
+
+`scripts/operator-provision-google-admin.mjs` provisions a separate Google-only
+administrator for an exact, verified Google email. It follows the same key
+rotation gate and Supabase CLI/project/database-owner checks as the synthetic
+operator command. Its `.env.local` service key is used only to create a
+passwordless Auth identity when needed; the grant itself runs through the
+postgres-only `private.opentrack_operator_add_google_admin` function and writes
+both operator and account audit records. It refuses to promote a user already
+mapped to a member account, so an existing Circle member cannot be silently
+turned into a platform administrator. See
+[`docs/google-admin-sign-in.md`](google-admin-sign-in.md) for provider setup.
