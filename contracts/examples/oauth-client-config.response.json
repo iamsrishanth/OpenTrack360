@@ -1,0 +1,11 @@
+{
+  "issuer": "https://project-ref.supabase.co/auth/v1",
+  "authorizationEndpoint": "https://project-ref.supabase.co/auth/v1/oauth/authorize",
+  "tokenExchangeEndpoint": "https://track.srishanth.me/api/v1/auth/oauth/exchange",
+  "refreshEndpoint": "https://track.srishanth.me/api/v1/auth/refresh",
+  "clientId": "fixture-public-client-id",
+  "redirectUri": "https://track.srishanth.me/oauth/callback",
+  "responseType": "code",
+  "codeChallengeMethod": "S256",
+  "scopes": ["openid"]
+}
