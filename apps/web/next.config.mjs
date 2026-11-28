@@ -33,6 +33,26 @@ const nextConfig = {
         headers: [
           { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" }
         ]
+      },
+      {
+        source: "/oauth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" }
+        ]
+      },
+      {
+        source: "/api/oauth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" }
+        ]
+      },
+      {
+        source: "/api/v1/auth/oauth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" }
+        ]
       }
     ];
   }

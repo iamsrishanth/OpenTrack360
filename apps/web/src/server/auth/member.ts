@@ -25,18 +25,40 @@ function unauthorized(): AuthFault {
   return new AuthFault(401, "unauthorized", "Unauthorized");
 }
 
-export function jwtSessionId(token: string): string | null {
+function jwtClaims(token: string): Record<string, unknown> | null {
   try {
     const part = token.split(".")[1];
     if (!part) return null;
-    const claims = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as Record<string, unknown>;
-    const id = claims.session_id ?? claims.sid;
-    return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
-      ? id
+    const claims: unknown = JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+    return claims && typeof claims === "object" && !Array.isArray(claims)
+      ? claims as Record<string, unknown>
       : null;
   } catch {
     return null;
   }
+}
+
+export function jwtSessionId(token: string): string | null {
+  const claims = jwtClaims(token);
+  const id = claims?.session_id ?? claims?.sid;
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    ? id
+    : null;
+}
+
+export function jwtOAuthClientId(token: string): string | null {
+  const value = jwtClaims(token)?.client_id;
+  return typeof value === "string" && value.length <= 128 ? value : null;
+}
+
+export function jwtIssuedAt(token: string): number | null {
+  const value = jwtClaims(token)?.iat;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function hasOAuthClientClaim(token: string): boolean {
+  const claims = jwtClaims(token);
+  return claims !== null && Object.hasOwn(claims, "client_id");
 }
 
 export async function requireMember(
@@ -49,6 +71,14 @@ export async function requireMember(
   const token = match[1];
   const sessionId = jwtSessionId(token);
   if (!sessionId) throw unauthorized();
+
+  // Supabase OAuth access tokens carry a client_id claim. Only the explicitly
+  // configured first-party Android OAuth client may use the member API; regular
+  // username/password sessions do not have this claim and remain supported.
+  if (hasOAuthClientClaim(token)) {
+    const allowedClientId = process.env.SUPABASE_OAUTH_ANDROID_CLIENT_ID?.trim();
+    if (!allowedClientId || jwtOAuthClientId(token) !== allowedClientId) throw unauthorized();
+  }
 
   const admin = getAdminSupabase();
   const { data: userResult, error: userError } = await admin.auth.getUser(token);
