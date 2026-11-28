@@ -12,7 +12,7 @@ This records production deployment, hosted migration, drive-end validator eviden
 
 ## Production deployment and route probes
 
-The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). A read-only Vercel project inspection confirmed the project root is `apps/web` and the build command is `npm run build`. The production deployment used for the latest route probe is READY at `30ddf1e4cbadc25e70950a53b72906c7142eceb9` and aliased to the custom domain. This deployment also includes the production-only public OAuth client ID setting.
+The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). A read-only Vercel project inspection confirmed the project root is `apps/web` and the build command is `npm run build`. The latest production deployment is READY at `331977f36c60b6e7663a424052056704d8bd4926` and aliased to the custom domain. The application runtime remains from `30ddf1e4cbadc25e70950a53b72906c7142eceb9`; the latest deployment also contains the secret-placeholder fixture cleanup and the production-only public OAuth client ID setting.
 
 | Production request | Observed result | What it proves |
 | --- | --- | --- |
@@ -50,8 +50,9 @@ The 9-minute movement-to-stop gap remains a negative case: the actual hosted `pu
 - `npm run build`: passed and generated the guest share, pet recovery, invitation, admin, and versioned API routes.
 - Redocly lint for `contracts/openapi.yaml`: passed; all 125 contract JSON examples parsed.
 - The [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/46138607684) passed on PR #15, including operator helper tests, a clean local migration reset, and the full pgTAP suite. The migration is now applied to production.
+- PR #18 replaced the 43-character fragments in the share and pet recovery response fixtures with a documented fixed non-secret marker. Its [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/46140894496) passed fixture generation, operator helper tests, a clean local migration reset, and pgTAP on rerun after a GitHub runner port conflict.
 - `node --test scripts/operator-provision-admin.test.mjs` passed 6/6; the non-mutating CLI check verified the expected project and `postgres` database-management session.
-- On 28 November 2026, the production deployment at `30ddf1e4cbadc25e70950a53b72906c7142eceb9` was READY. Public probes returned 200 for `/`, `/admin`, `/s/{id}`, `/p/{id}`, `/i`, `/oauth/consent`, `/oauth/callback`, and `/.well-known/assetlinks.json`; 401 for signed-out `/api/v1/me`, `/api/v1/admin/accounts`, and `/api/v1/shares`; and 404 for an unknown public share without a secret. `/api/v1/auth/oauth-config` returned 200 with the public PKCE client configuration. Guest shells returned `private, no-store`, `no-referrer`, and `noindex` headers. The release association contained the expected package and fingerprint.
+- After PR #18 merged, the production deployment at `331977f36c60b6e7663a424052056704d8bd4926` reached READY on 28 November 2026. The latest probes returned 200 for `/api/v1/auth/oauth-config` and `/.well-known/assetlinks.json`, and 401 for signed-out `/api/v1/me` and `/api/v1/admin/accounts`. The earlier shell checks for `/`, `/admin`, `/s/{id}`, `/p/{id}`, `/i`, `/oauth/consent`, and `/oauth/callback` returned 200; signed-out `/api/v1/shares` returned 401; an unknown public share without a secret returned 404. Guest shells returned `private, no-store`, `no-referrer`, and `noindex` headers. The release association contained the expected package and fingerprint.
 
 ## Remaining acceptance and provider prerequisites
 
