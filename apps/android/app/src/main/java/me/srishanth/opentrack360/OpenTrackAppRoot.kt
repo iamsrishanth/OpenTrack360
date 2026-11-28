@@ -49,9 +49,15 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import me.srishanth.opentrack360.core.OpenTrackRuntime
+import me.srishanth.opentrack360.core.io.readUpToLimit
 import me.srishanth.opentrack360.core.api.ApiException
 import me.srishanth.opentrack360.core.api.MemberProfile
+import me.srishanth.opentrack360.core.auth.OAuthCallbackDecision
+import me.srishanth.opentrack360.core.auth.OAuthCallbackPolicy
+import me.srishanth.opentrack360.core.auth.OAuthCallbackRequest
+import me.srishanth.opentrack360.core.auth.OAuthClientConfig
 import me.srishanth.opentrack360.core.auth.MemberSession
+import me.srishanth.opentrack360.core.auth.OAuthPkce
 import me.srishanth.opentrack360.sharing.GuestShareRequest
 import me.srishanth.opentrack360.sharing.GuestShareScreen
 import me.srishanth.opentrack360.sharing.CircleInviteLinkParser
@@ -195,6 +201,8 @@ fun OpenTrackAppRoot(
     onCloseGuest: () -> Unit,
     onClosePetRecovery: () -> Unit,
     onCloseCircleInvite: () -> Unit,
+    oauthCallbackRequest: OAuthCallbackRequest? = null,
+    onCloseOAuthCallback: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val lostPetReportIdStore = remember(activity.applicationContext) {
@@ -223,6 +231,8 @@ fun OpenTrackAppRoot(
     var page by remember { mutableStateOf(AppPage.CIRCLES) }
     var booting by remember { mutableStateOf(true) }
     var signIn by remember { mutableStateOf(SignInUiState()) }
+    var oauthConfig by remember { mutableStateOf<OAuthClientConfig?>(null) }
+    var oauthStarting by remember { mutableStateOf(false) }
     var inviteAcceptBusy by remember { mutableStateOf(false) }
     var inviteAcceptError by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf(PasswordFormUiState()) }
@@ -333,7 +343,7 @@ fun OpenTrackAppRoot(
                 val (contentType, photoBytes) = withContext(Dispatchers.IO) {
                     val type = activity.contentResolver.getType(uri)?.lowercase(Locale.ROOT)
                     require(type in PET_PHOTO_CONTENT_TYPES) { "Choose a JPEG, PNG, or WebP image." }
-                    val bytes = activity.contentResolver.openInputStream(uri)?.use { it.readNBytes(MAX_PET_PHOTO_BYTES + 1) }
+                    val bytes = activity.contentResolver.openInputStream(uri)?.use { it.readUpToLimit(MAX_PET_PHOTO_BYTES) }
                         ?: throw IllegalArgumentException("The selected image could not be read.")
                     require(bytes.isNotEmpty()) { "The selected image is empty." }
                     require(bytes.size <= MAX_PET_PHOTO_BYTES) { "Choose an image smaller than 5 MiB." }
@@ -482,6 +492,7 @@ fun OpenTrackAppRoot(
 
     LaunchedEffect(Unit) {
         val saved = runtime.sessions.load()
+        if (saved != null) runCatching { runtime.pendingOAuthAuthorizations.clear() }
         runCatching { petReminderScheduler.activateMember(saved?.memberId) }
         session = saved
         if (saved == null) {
@@ -503,6 +514,44 @@ fun OpenTrackAppRoot(
             }
         }
         booting = false
+    }
+
+    LaunchedEffect(booting, session?.memberId, page) {
+        if (booting || session != null || page == AppPage.RECOVERY) return@LaunchedEffect
+        oauthConfig = withContext(Dispatchers.IO) {
+            runCatching { runtime.api.loadOAuthClientConfig() }.getOrNull()
+        }
+    }
+
+    LaunchedEffect(booting, oauthCallbackRequest) {
+        if (booting) return@LaunchedEffect
+        val callback = oauthCallbackRequest ?: return@LaunchedEffect
+        try {
+            val pending = runCatching {
+                withContext(Dispatchers.IO) { runtime.pendingOAuthAuthorizations.consume() }
+            }.getOrNull()
+            when (val decision = OAuthCallbackPolicy.validate(callback, pending, System.currentTimeMillis())) {
+                OAuthCallbackDecision.Cancelled -> {
+                    signIn = SignInUiState(errorMessage = "Browser sign-in was cancelled.")
+                }
+                OAuthCallbackDecision.Invalid -> {
+                    signIn = SignInUiState(errorMessage = "Could not verify browser sign-in. Start again.")
+                }
+                is OAuthCallbackDecision.Exchange -> {
+                    signIn = SignInUiState(submitting = true)
+                    runCatching { runtime.api.exchangeOAuthAuthorizationCode(decision.code, decision.pending) }
+                        .onSuccess { member ->
+                            signIn = SignInUiState()
+                            authenticateAndLoad(member)
+                        }
+                        .onFailure { error ->
+                            signIn = SignInUiState(errorMessage = error.message ?: "Browser sign-in could not be completed.")
+                        }
+                }
+            }
+        } finally {
+            onCloseOAuthCallback()
+        }
     }
 
     LaunchedEffect(session?.memberId, booting) {
@@ -1184,6 +1233,7 @@ fun OpenTrackAppRoot(
                     }
                 },
                 onSignOut = {
+                    runCatching { runtime.pendingOAuthAuthorizations.clear() }
                     TrackingServiceController.stopForLogout(activity)
                     scope.launch { runCatching { runtime.api.logout() } }
                     session?.let { runtime.endMemberSession(it.memberId) }
@@ -1201,6 +1251,8 @@ fun OpenTrackAppRoot(
                 )
                 else -> SignInScreen(
                     state = signIn,
+                    oauthAvailable = oauthConfig != null,
+                    oauthLaunching = oauthStarting,
                     invitationPending = circleInviteRequest != null,
                     onUsernameChange = { signIn = signIn.copy(username = it, errorMessage = null) },
                     onPasswordChange = { signIn = signIn.copy(password = it, errorMessage = null) },
@@ -1208,13 +1260,41 @@ fun OpenTrackAppRoot(
                         scope.launch {
                             signIn = signIn.copy(submitting = true, errorMessage = null)
                             runCatching { runtime.api.signIn(username, pass) }
-                                .onSuccess { authenticateAndLoad(it); signIn = SignInUiState(username = username) }
+                            .onSuccess {
+                                runCatching { runtime.pendingOAuthAuthorizations.clear() }
+                                authenticateAndLoad(it)
+                                signIn = SignInUiState(username = username)
+                            }
                                 .onFailure { error ->
                                     signIn = SignInUiState(
                                         username = username,
                                         errorMessage = if (error is ApiException && error.statusCode == 401) "Username or password could not be verified. Contact your account administrator if you need help." else error.message ?: "Could not sign in.",
                                     )
                                 }
+                        }
+                    },
+                    onOAuthSignIn = {
+                        val config = oauthConfig
+                        if (config != null && !oauthStarting) {
+                            scope.launch {
+                                oauthStarting = true
+                                signIn = signIn.copy(submitting = true, errorMessage = null)
+                                runCatching {
+                                    val pending = OAuthPkce.newAuthorization(config)
+                                    withContext(Dispatchers.IO) {
+                                        runtime.pendingOAuthAuthorizations.save(pending)
+                                    }
+                                    val authorizationUrl = OAuthPkce.authorizationUrl(config, pending)
+                                    activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authorizationUrl)))
+                                }.onFailure {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) { runtime.pendingOAuthAuthorizations.clear() }
+                                    }
+                                    signIn = signIn.copy(errorMessage = "Could not start browser sign-in.")
+                                }
+                                signIn = signIn.copy(submitting = false)
+                                oauthStarting = false
+                            }
                         }
                     },
                     onRecoveryHelp = { page = AppPage.RECOVERY },

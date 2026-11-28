@@ -1,6 +1,8 @@
 package me.srishanth.opentrack360.sharing
 
 import android.content.Intent
+import me.srishanth.opentrack360.core.auth.OAuthCallbackParser
+import me.srishanth.opentrack360.core.auth.OAuthCallbackRequest
 
 /**
  * Entry points for the activity to call from onCreate (cold start) and onNewIntent (warm start).
@@ -8,13 +10,14 @@ import android.content.Intent
  */
 object DeepLinkRouter {
     /**
-     * The three supported App Link payloads. Credentials remain only in these validated,
+     * The supported App Link payloads. Credentials remain only in these validated,
      * transient request objects; callers must not persist this value.
      */
     data class IncomingRequests(
         val guestShare: GuestShareRequest? = null,
         val petRecovery: PetRecoveryRequest? = null,
         val circleInvite: CircleInviteRequest? = null,
+        val oauthCallback: OAuthCallbackRequest? = null,
     )
 
     /**
@@ -35,6 +38,7 @@ object DeepLinkRouter {
                 guestShare = (GuestShareLinkParser.parse(rawUri) as? GuestLinkParseResult.Valid)?.request,
                 petRecovery = PetRecoveryLinkParser.parse(rawUri),
                 circleInvite = CircleInviteLinkParser.parse(rawUri),
+                oauthCallback = OAuthCallbackParser.parse(rawUri),
             )
         } else {
             IncomingRequests()

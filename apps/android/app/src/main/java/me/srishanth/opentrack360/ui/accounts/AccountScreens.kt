@@ -40,6 +40,9 @@ fun SignInScreen(
     onSignIn: (username: String, password: String) -> Unit,
     onRecoveryHelp: () -> Unit,
     onOpenGuestLink: () -> Unit,
+    oauthAvailable: Boolean = false,
+    oauthLaunching: Boolean = false,
+    onOAuthSignIn: () -> Unit = {},
 ) {
     MemberScreen(
         title = "Sign in to OpenTrack360",
@@ -87,6 +90,15 @@ fun SignInScreen(
                 enabled = !state.submitting && state.username.isNotBlank() && state.password.isNotEmpty() && !state.accountDisabled,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (oauthAvailable) {
+                TextButton(
+                    onClick = onOAuthSignIn,
+                    enabled = !state.submitting && !oauthLaunching && !state.accountDisabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (oauthLaunching) "Opening browser sign-in…" else "Sign in with OpenTrack360 in browser")
+                }
+            }
             TextButton(onClick = onRecoveryHelp, modifier = Modifier.fillMaxWidth()) { Text("Get account recovery help") }
         }
         TextButton(onClick = onOpenGuestLink, modifier = Modifier.fillMaxWidth()) {

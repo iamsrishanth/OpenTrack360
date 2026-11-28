@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import java.util.UUID
 import java.util.Locale
 import androidx.compose.ui.unit.dp
@@ -736,6 +737,7 @@ fun DrivingReportsScreen(
     message: String,
     onCorrectClassification: (tripId: String, classification: String) -> Unit,
 ) {
+    val displayLocale = LocalLocale.current.platformLocale
     MemberScreen(title = "Driving reports", subtitle = "Reports include only measurements available from this phone.") {
         StatusBanner(condition, "Drive history", message)
         latestLocalTrip?.let { trip ->
@@ -748,14 +750,14 @@ fun DrivingReportsScreen(
                 }
                 LabeledValue("Classification", role)
                 LabeledValue("Duration", formatMeasuredDuration(trip.elapsedSeconds))
-                LabeledValue("Distance", String.format(Locale.getDefault(), "%.1f km", trip.distanceMeters / 1_000.0))
+                LabeledValue("Distance", String.format(displayLocale, "%.1f km", trip.distanceMeters / 1_000.0))
                 LabeledValue(
                     "Average measured speed",
-                    trip.averageMeasuredSpeedMps?.let { String.format(Locale.getDefault(), "%.0f km/h", it * 3.6) } ?: "Unavailable",
+                    trip.averageMeasuredSpeedMps?.let { String.format(displayLocale, "%.0f km/h", it * 3.6) } ?: "Unavailable",
                 )
                 LabeledValue(
                     "Maximum measured speed",
-                    trip.maxMeasuredSpeedMps?.let { String.format(Locale.getDefault(), "%.0f km/h", it * 3.6) } ?: "Unavailable",
+                    trip.maxMeasuredSpeedMps?.let { String.format(displayLocale, "%.0f km/h", it * 3.6) } ?: "Unavailable",
                 )
                 LabeledValue("Measured stops", trip.stopCount.toString())
                 Text("This phone-only summary is not included in the Circle report and is cleared when you sign out.")

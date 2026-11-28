@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import me.srishanth.opentrack360.core.io.readUpToLimit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -63,7 +64,7 @@ private fun downloadSignedPetPhoto(rawUrl: String): androidx.compose.ui.graphics
         if (connection.responseCode !in 200..299) return null
         val contentType = connection.contentType?.substringBefore(';')?.trim()?.lowercase()
         require(contentType in IMAGE_CONTENT_TYPES)
-        val bytes = connection.inputStream.use { it.readNBytes(MAX_IMAGE_BYTES + 1) }
+        val bytes = connection.inputStream.use { it.readUpToLimit(MAX_IMAGE_BYTES) }
         require(bytes.isNotEmpty() && bytes.size <= MAX_IMAGE_BYTES)
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

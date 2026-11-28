@@ -23,7 +23,7 @@ android {
         applicationId = "me.srishanth.opentrack360"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.0"
         buildConfigField("String", "API_BASE_URL", "\"https://track.srishanth.me/api/v1/\"")
 
@@ -89,6 +89,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.android)
+    testImplementation(libs.json)
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.junit)

@@ -6,6 +6,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import me.srishanth.opentrack360.BuildConfig
 import me.srishanth.opentrack360.core.auth.MemberSession
+import me.srishanth.opentrack360.core.auth.OAuthClientConfig
+import me.srishanth.opentrack360.core.auth.PendingOAuthAuthorization
 import me.srishanth.opentrack360.core.auth.SessionStore
 import org.json.JSONObject
 import java.io.IOException
@@ -69,18 +71,61 @@ class OpenTrackApi(
         return parseSession(requireSuccess(response)).also(sessions::save)
     }
 
+    suspend fun loadOAuthClientConfig(): OAuthClientConfig {
+        val response = request(
+            method = "GET",
+            path = "auth/oauth-config",
+            bearer = null,
+            clearMemberSessionOnUnauthorized = false,
+        )
+        return OAuthClientConfig.parse(requireSuccess(response), baseUrl)
+    }
+
+    suspend fun exchangeOAuthAuthorizationCode(
+        code: String,
+        pending: PendingOAuthAuthorization,
+    ): MemberSession {
+        require(code.isNotBlank() && code.length <= 4_096 && code.none { it.isISOControl() || it.isWhitespace() })
+        val exchangePath = OAuthClientConfig.trustedApiEndpointPath(
+            baseUrl,
+            pending.tokenExchangeEndpoint,
+            "auth/oauth/exchange",
+        )
+        OAuthClientConfig.trustedApiEndpointPath(baseUrl, pending.refreshEndpoint, "auth/refresh")
+        require(pending.clientId.length in 1..128 && pending.redirectUri == OAuthClientConfig.REDIRECT_URI)
+
+        sessions.clear()
+        val body = JSONObject()
+            .put("code", code)
+            .put("codeVerifier", pending.codeVerifier)
+        val response = request("POST", exchangePath, body, bearer = null)
+        return parseSession(
+            requireSuccess(response),
+            oauthClientId = pending.clientId,
+            oauthRefreshEndpoint = pending.refreshEndpoint,
+        ).also(sessions::save)
+    }
+
     suspend fun currentSession(): MemberSession? = sessions.load()
 
     suspend fun refreshSession(): MemberSession? = refreshMutex.withLock {
         val current = sessions.load() ?: return null
         if (current.expiresAtEpochMillis > nowMillis() + REFRESH_SKEW_MS) return current
+        val refreshPath = current.oauthRefreshEndpoint?.let {
+            OAuthClientConfig.trustedApiEndpointPath(baseUrl, it, "auth/refresh")
+        } ?: "auth/refresh"
         val body = JSONObject().put("refreshToken", current.refreshToken)
-        val response = request("POST", "auth/refresh", body, bearer = null)
+        current.oauthClientId?.let { body.put("clientId", it) }
+        val response = request("POST", refreshPath, body, bearer = null)
         if (response.statusCode == 401 || response.statusCode == 403) {
             sessions.clear()
             throw ApiException(response.statusCode, response.errorCode())
         }
-        parseSession(requireSuccess(response)).also(sessions::save)
+        parseSession(
+            requireSuccess(response),
+            oauthClientId = current.oauthClientId,
+            oauthRefreshEndpoint = current.oauthRefreshEndpoint,
+        ).also(sessions::save)
     }
 
     suspend fun accessToken(): String {
@@ -283,7 +328,11 @@ class OpenTrackApi(
 
     private fun String.encodeQueryComponent(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
 
-    private fun parseSession(json: JSONObject): MemberSession {
+    private fun parseSession(
+        json: JSONObject,
+        oauthClientId: String? = null,
+        oauthRefreshEndpoint: String? = null,
+    ): MemberSession {
         val user = json.getJSONObject("user")
         val expiresIn = json.getLong("expiresInSeconds").coerceAtLeast(0)
         return MemberSession(
@@ -293,6 +342,8 @@ class OpenTrackApi(
             memberId = user.getString("id"),
             username = user.getString("username"),
             mustRotatePassword = user.optBoolean("mustRotatePassword", false),
+            oauthClientId = oauthClientId,
+            oauthRefreshEndpoint = oauthRefreshEndpoint,
         )
     }
 

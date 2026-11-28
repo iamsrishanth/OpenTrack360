@@ -23,6 +23,12 @@ class DeepLinkRouterTest {
         assertNull(invite.guestShare)
         assertNull(invite.petRecovery)
         assertTrue(invite.circleInvite != null)
+
+        val oauth = route(oauthCallbackUrl)
+        assertNull(oauth.guestShare)
+        assertNull(oauth.petRecovery)
+        assertNull(oauth.circleInvite)
+        assertTrue(oauth.oauthCallback != null)
     }
 
     @Test
@@ -34,6 +40,7 @@ class DeepLinkRouterTest {
             petUrl.replace("/p/", "/pet/"),
             inviteUrl.replace("/i#", "/i/extra#"),
             inviteUrl.replace("/i#", "/s/$shareId?token=x#"),
+            oauthCallbackUrl.replace("/oauth/callback?", "/oauth/callback/extra?"),
         )
 
         invalidUris.forEachIndexed { index, uri ->
@@ -41,6 +48,7 @@ class DeepLinkRouterTest {
             assertNull("Unexpected guest route for malformed case #$index", requests.guestShare)
             assertNull("Unexpected pet route for malformed case #$index", requests.petRecovery)
             assertNull("Unexpected invite route for malformed case #$index", requests.circleInvite)
+            assertNull("Unexpected OAuth route for malformed case #$index", requests.oauthCallback)
         }
     }
 
@@ -115,5 +123,6 @@ class DeepLinkRouterTest {
         const val shareUrl = "https://track.srishanth.me/s/$shareId#$secret"
         const val petUrl = "https://track.srishanth.me/p/$petId#$secret"
         const val inviteUrl = "https://track.srishanth.me/i#$inviteToken"
+        val oauthCallbackUrl = "https://track.srishanth.me/oauth/callback?code=fake-auth-code&state=${"A".repeat(43)}"
     }
 }

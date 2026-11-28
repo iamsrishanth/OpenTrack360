@@ -77,19 +77,36 @@ class KeystoreSessionStore(context: Context) : SessionStore {
             out.writeUTF(session.memberId)
             out.writeUTF(session.username)
             out.writeBoolean(session.mustRotatePassword)
+            out.writeBoolean(session.oauthClientId != null)
+            if (session.oauthClientId != null) {
+                out.writeUTF(session.oauthClientId)
+                out.writeUTF(requireNotNull(session.oauthRefreshEndpoint))
+            }
         }
         buffer.toByteArray()
     }
 
     private fun decode(bytes: ByteArray): MemberSession = DataInputStream(ByteArrayInputStream(bytes)).use { input ->
-        require(input.readInt() == FORMAT_VERSION)
+        val formatVersion = input.readInt()
+        require(formatVersion in LEGACY_FORMAT_VERSION..FORMAT_VERSION)
+        val accessToken = input.readUTF()
+        val refreshToken = input.readUTF()
+        val expiresAtEpochMillis = input.readLong()
+        val memberId = input.readUTF()
+        val username = input.readUTF()
+        val mustRotatePassword = input.readBoolean()
+        val hasOAuthMetadata = formatVersion >= OAUTH_METADATA_FORMAT_VERSION && input.readBoolean()
+        val oauthClientId = if (hasOAuthMetadata) input.readUTF() else null
+        val oauthRefreshEndpoint = if (hasOAuthMetadata) input.readUTF() else null
         MemberSession(
-            accessToken = input.readUTF(),
-            refreshToken = input.readUTF(),
-            expiresAtEpochMillis = input.readLong(),
-            memberId = input.readUTF(),
-            username = input.readUTF(),
-            mustRotatePassword = input.readBoolean(),
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresAtEpochMillis = expiresAtEpochMillis,
+            memberId = memberId,
+            username = username,
+            mustRotatePassword = mustRotatePassword,
+            oauthClientId = oauthClientId,
+            oauthRefreshEndpoint = oauthRefreshEndpoint,
         ).also { require(input.available() == 0) }
     }
 
@@ -101,6 +118,8 @@ class KeystoreSessionStore(context: Context) : SessionStore {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_BYTES = 12
         const val TAG_BITS = 128
-        const val FORMAT_VERSION = 1
+        const val LEGACY_FORMAT_VERSION = 1
+        const val OAUTH_METADATA_FORMAT_VERSION = 2
+        const val FORMAT_VERSION = 2
     }
 }

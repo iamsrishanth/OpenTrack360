@@ -11,12 +11,14 @@ import me.srishanth.opentrack360.sharing.DeepLinkRouter
 import me.srishanth.opentrack360.sharing.CircleInviteRequest
 import me.srishanth.opentrack360.sharing.GuestShareRequest
 import me.srishanth.opentrack360.sharing.PetRecoveryRequest
+import me.srishanth.opentrack360.core.auth.OAuthCallbackRequest
 import me.srishanth.opentrack360.ui.theme.OpenTrackTheme
 
 class MainActivity : ComponentActivity() {
     private var guestRequest by mutableStateOf<GuestShareRequest?>(null)
     private var petRecoveryRequest by mutableStateOf<PetRecoveryRequest?>(null)
     private var circleInviteRequest by mutableStateOf<CircleInviteRequest?>(null)
+    private var oauthCallbackRequest by mutableStateOf<OAuthCallbackRequest?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,9 +31,11 @@ class MainActivity : ComponentActivity() {
                     guestRequest = guestRequest,
                     petRecoveryRequest = petRecoveryRequest,
                     circleInviteRequest = circleInviteRequest,
+                    oauthCallbackRequest = oauthCallbackRequest,
                     onCloseGuest = { guestRequest = null },
                     onClosePetRecovery = { petRecoveryRequest = null },
                     onCloseCircleInvite = { circleInviteRequest = null },
+                    onCloseOAuthCallback = { oauthCallbackRequest = null },
                 )
             }
         }
@@ -50,6 +54,7 @@ class MainActivity : ComponentActivity() {
                 guestRequest = requests.guestShare
                 petRecoveryRequest = requests.petRecovery
                 circleInviteRequest = requests.circleInvite
+                oauthCallbackRequest = requests.oauthCallback
             },
             clearRetainedUri = { incoming?.data = null },
         )

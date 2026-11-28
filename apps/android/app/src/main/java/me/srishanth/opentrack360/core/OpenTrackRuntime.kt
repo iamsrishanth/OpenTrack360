@@ -8,6 +8,7 @@ import me.srishanth.opentrack360.core.api.ApiTrackingTransport
 import me.srishanth.opentrack360.core.api.OpenTrackApi
 import me.srishanth.opentrack360.sharing.SenderShare
 import me.srishanth.opentrack360.core.auth.KeystoreSessionStore
+import me.srishanth.opentrack360.core.auth.AndroidKeystoreOAuthPendingAuthorizationStore
 import me.srishanth.opentrack360.tracking.AndroidKeystoreTrackingQueueCipher
 import me.srishanth.opentrack360.tracking.AndroidPermissionProbe
 import me.srishanth.opentrack360.tracking.ArrivalShareTarget
@@ -38,6 +39,7 @@ class OpenTrackRuntime(context: Context) : TrackingRuntimeProvider {
     private val appContext = context.applicationContext
     private val sharingPreferences = appContext.getSharedPreferences(SHARING_PREFERENCES, Context.MODE_PRIVATE)
     val sessions = KeystoreSessionStore(appContext)
+    val pendingOAuthAuthorizations = AndroidKeystoreOAuthPendingAuthorizationStore(appContext)
     val api = OpenTrackApi(sessions)
     private val mutableDriveEndShares = MutableStateFlow<Map<String, BoundDriveEndShare>>(emptyMap())
     private val arrivalShareTargets = ArrivalShareTargetStore(
