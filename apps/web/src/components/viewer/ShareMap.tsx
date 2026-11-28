@@ -7,6 +7,7 @@ import type { GeoJSONSource, Map as MapLibreMap, Marker } from "maplibre-gl";
 import styles from "./share-viewer.module.css";
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+const FOLLOW_THRESHOLD_METERS = 8;
 
 type Fix = {
   latitude: number;
@@ -37,6 +38,13 @@ function accuracyFeature(fix: Fix): Feature<Polygon> {
   };
 }
 
+function distanceMeters(first: Fix, second: Fix): number {
+  const latitudeMeters = (second.latitude - first.latitude) * 111_320;
+  const meanLatitude = ((first.latitude + second.latitude) / 2 * Math.PI) / 180;
+  const longitudeMeters = (second.longitude - first.longitude) * 111_320 * Math.cos(meanLatitude);
+  return Math.hypot(latitudeMeters, longitudeMeters);
+}
+
 export default function ShareMap({ fix, stale }: { fix: Fix; stale: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -44,17 +52,24 @@ export default function ShareMap({ fix, stale }: { fix: Fix; stale: boolean }) {
   const fixRef = useRef(fix);
 
   useEffect(() => {
+    const previousFix = fixRef.current;
     fixRef.current = fix;
     const point: [number, number] = [fix.longitude, fix.latitude];
     const map = mapRef.current;
     if (!map) return;
 
-    if (map.isStyleLoaded()) {
+    const locationChanged = previousFix.latitude !== fix.latitude || previousFix.longitude !== fix.longitude;
+    const accuracyChanged = previousFix.accuracyMeters !== fix.accuracyMeters;
+    if (map.isStyleLoaded() && (locationChanged || accuracyChanged)) {
       const source = map.getSource("accuracy") as GeoJSONSource | undefined;
       source?.setData(accuracyFeature(fix));
     }
-    markerRef.current?.setLngLat(point);
-    map.easeTo({ center: point, duration: 600, essential: false });
+    if (locationChanged) {
+      markerRef.current?.setLngLat(point);
+      if (distanceMeters(previousFix, fix) >= FOLLOW_THRESHOLD_METERS) {
+        map.easeTo({ center: point, duration: 600, essential: false });
+      }
+    }
   }, [fix]);
 
   useEffect(() => {
