@@ -2,19 +2,17 @@
 
 **Snapshot date:** 28 November 2026
 
-**Merged PR:** [#2](https://github.com/iamsrishanth/OpenTrack360/pull/2)
+**Initial web/API implementation:** `45dbe9f56383179f1227d3eed90b1690fa562271`
 
-**Web implementation:** `510dc92572e5838aa525d68e243e9fa569824501`
+**Production application code commit:** `0959572e15f1a045c042a2a5a341172d574da327`
 
-**Contract validation head:** `aa28f42`
+The application code above remains the production implementation; later acceptance-checkpoint merges change documentation only. Route probes below record the production behavior observed on 28 November 2026.
 
-**Production application release:** `485fddc716aa098076be600645b69b0cd4f044b7`
-
-This records production deployment and hosted migration evidence. Signed-in end-to-end acceptance still needs disposable member credentials in an isolated test environment.
+This records production deployment, hosted migration, drive-end validator evidence, public route probes, and Android domain-verification state. Signed-in end-to-end acceptance still needs an authorized platform administrator and disposable synthetic member credentials.
 
 ## Production deployment and route probes
 
-The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). The production deployment is READY and the custom domain resolves to the `main` deployment. The application routes in that deployment use the release from merge commit `485fddc716aa098076be600645b69b0cd4f044b7`; the current acceptance-record commit changes documentation only.
+The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). A read-only Vercel project inspection confirmed the project root is `apps/web` and the build command is `npm run build`. The Vercel production deployment used for the latest route probe was READY at `b4911b7debc6ad544f272a6df1808c5c8d9936f8` and aliased to the custom domain. Its application code is from `0959572e15f1a045c042a2a5a341172d574da327`.
 
 | Production request | Observed result | What it proves |
 | --- | --- | --- |
@@ -26,33 +24,38 @@ The existing Vercel project `opentrack360` serves [track.srishanth.me](https://t
 | `GET /api/v1/me` without bearer | HTTP 401; no-store | Member API rejects a signed-out caller. |
 | `GET /api/v1/admin/accounts` without admin session | HTTP 401; no-store | Account administration API rejects a signed-out caller. |
 | `GET /api/v1/shares` without member bearer | HTTP 401; private no-store | Sender-only share list rejects a signed-out caller. |
-| `GET /api/v1/public/shares/{unknown-id}` without bearer | HTTP 404; private no-store; noindex | A public ID by itself returns no location. |
-| Same unknown share request with an invalid bearer value | HTTP 404; private no-store; noindex | A bad secret returns no location. The secret was sent only in the header, not the URL. |
-| `GET /.well-known/assetlinks.json` | HTTP 200; body contains `me.srishanth.opentrack360` and the direct-release certificate SHA-256 | Production association names the Android release package and certificate. Google's Digital Asset Links statement matches that pair. Both the emulator and Moto report domain verification `verified`; on both, user link-selection state is currently disabled. |
+| `GET /api/v1/public/shares/{unknown-id}` without bearer | HTTP 404 | A public ID by itself returns no location. |
+| `GET /.well-known/assetlinks.json` | HTTP 200; `application/json`; one statement for package `me.srishanth.opentrack360` and release SHA-256 `22:32:AD:A1:CA:CB:94:55:50:16:AB:83:68:D8:DF:48:DF:10:36:33:A9:E3:A1:63:88:2F:64:3E:D0:44:32:24` | Production serves the expected release association. Google's Digital Asset Links check reports `linked: true`; a read-only `adb pm get-app-links` check reports `track.srishanth.me: verified` on the connected emulator and both Moto G57 Power devices. Android reports user link selection disabled on the emulator and Moto; actual message-app taps remain unverified. |
 
-The post-deployment Vercel runtime error scan found no error clusters in the preceding hour. These route probes verify shell and signed-out behavior; they do not substitute for valid-member or valid-share flows.
+These route probes verify shell and signed-out behavior; they do not substitute for valid-member or valid-share flows.
 
 ## Supabase hosted database
 
-The ignored local `.env.local` targets the existing Supabase Free project `OpenTrack360` (`oxfcxucpzrvbifefnwvp`). Supabase CLI 3.4.0 was authenticated and linked to that project. Secret values were not printed or committed.
+The ignored local `.env.local` targets the existing Supabase Free project `OpenTrack360` (`oxfcxucpzrvbifefnwvp`). Supabase CLI 3.4.0 is authenticated and linked to that project. No credential values are committed to Git or included in fixtures.
 
-The hosted database already contained the OpenTrack360 private schema, but it had no migration ledger. Before changing the ledger, read-only checks verified the existing structures and function markers for the first six repository migrations. Those six versions were reconciled as already applied with `supabase migration repair`; migrations `20261127000300` and `20261127000400` were then applied with `supabase db push`. `supabase migration list --remote` now reports all eight repository migrations applied. The last two migrations are committed in the merged revision.
+The hosted database already contained the OpenTrack360 private schema, but it had no migration ledger. Before changing the ledger, read-only checks verified the existing structures and function markers for the first six repository migrations. Those six versions were reconciled as already applied with `supabase migration repair`; migrations `20261127000300` and `20261127000400` were then applied with `supabase db push`. The owner-only synthetic-admin migration `20261127000500` passed the isolated CI database suite and was applied through Supabase CLI to the existing production project. The remote ledger now reports all nine repository migrations applied.
 
-Read-only checks after the push confirm the new trip session and sharing-epoch fields, SOS notification linkage, indexes, and sender-only share projection. Auth settings report `disable_signup=true`, `mailer_autoconfirm=false`, and `phone_autoconfirm=false`. All 25 tables in the private schema have RLS enabled, and the `anon` and `authenticated` roles have no direct table `SELECT` grants. The one-time administrator bootstrap is consumed and an active platform-administrator record exists; no account identity or credential was read.
+Read-only checks confirm the operator function exists and is executable by `postgres` only; `service_role`, `anon`, and `authenticated` cannot call it. `service_role` has no direct `INSERT`, `UPDATE`, or `DELETE` privilege on `private.member_accounts`, and the operator audit table has RLS enabled. The migration did not create or change any account. Earlier checks confirmed the one-time administrator bootstrap is consumed and an active platform-administrator record exists; no account identity or credential was read. Auth settings report `disable_signup=true`, `mailer_autoconfirm=false`, and `phone_autoconfirm=false`.
+
+## Drive-end validator examples
+
+The 9-minute movement-to-stop gap remains a negative case: the actual hosted `public.opentrack_share_event` validator leaves the share pending, and the guest read remains HTTP 200. The positive fixture supplies continuous qualifying movement evidence within the permitted transition window followed by five minutes of stationary evidence: the validator confirms the event, and the guest read returns HTTP 410 with no location or speed. Both cases were executed inside a transaction and rolled back. A read-only postcheck found no persisted fixture accounts, shares, or location samples.
 
 ## Build and test evidence
 
-- `npm run test:api`: 22/22 passed.
+- `npm run test:api`: 23/23 passed.
 - `npm run typecheck`: passed.
 - `npm run build`: passed and generated the guest share, pet recovery, invitation, admin, and versioned API routes.
-- Redocly lint for `contracts/openapi.yaml`: passed on contract validation head `aa28f42`; all 120 contract JSON examples parsed locally on the Android branch on 2026-11-27.
-- The post-merge [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45947182673) applied all eight migrations to a fresh local Supabase stack and passed all 100 pgTAP assertions. The later [drive-end contract fixture workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45953227412) also passed on `aa28f42`, including pending and confirmed evidence examples.
-- The production Vercel deployment is READY for the current `main` revision, with application code from release commit `485fddc716aa098076be600645b69b0cd4f044b7`; the Vercel and Vercel Preview Comments checks passed before merge.
+- Redocly lint for `contracts/openapi.yaml`: passed; all 120 contract JSON examples parsed.
+- The [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45952892371) passed on PR #3. The same workflow passed on [PR #7](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45988903479), including command-helper tests, a clean local migration reset, and the full pgTAP suite.
+- `node --test scripts/operator-provision-admin.test.mjs` passed 6/6; the non-mutating CLI check verified the expected project and `postgres` database-management session.
+- On 28 November 2026, the production deployment at `b4911b7debc6ad544f272a6df1808c5c8d9936f8` was READY. Public probes returned 200 for `/`, `/admin`, `/s/{id}`, `/p/{id}`, `/i`, and `/.well-known/assetlinks.json`; 401 for signed-out `/api/v1/me`, `/api/v1/admin/accounts`, and `/api/v1/shares`; and 404 for an unknown public share without a secret. The guest shells returned `private, no-store`, `no-referrer`, and `noindex` headers. The release association contained the expected package and fingerprint.
 
 ## Remaining acceptance and provider prerequisites
 
-- No signed-in account flow or valid guest share was exercised: there are no disposable member credentials in this session, and the `teams/web-platform` Vercel preview has no environment variables. The production environment has the five server variables `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `OPENTRACK_AUTH_EMAIL_DOMAIN`, and `NEXT_PUBLIC_SITE_URL`; their secret values were not read.
-- The Supabase project has no preview branch. [Supabase deployment guidance](https://supabase.com/docs/guides/deployment) says preview branching requires the Pro plan, which would add cost; no paid branch or additional project was created. Provide an isolated zero-cost test project and two synthetic member accounts, or specify another safe test environment, to run provisioning, password rotation/disable, Circle isolation, location ingest, valid link revocation, and valid guest reads. No production member records were used as test data.
-- The direct-APK release signer for `me.srishanth.opentrack360` is available; its public SHA-256 fingerprint is `22:32:AD:A1:CA:CB:94:55:50:16:AB:83:68:D8:DF:48:DF:10:36:33:A9:E3:A1:63:88:2F:64:3E:D0:44:32:24`. Production `assetlinks.json` serves the matching package and fingerprint over HTTP 200, and Google's Digital Asset Links check returns `linked: true`. The emulator and Moto both report the release domain `verified`; each owner list contains only the release package, and the debug package has no production host entry. `pm get-app-links` reports `track.srishanth.me` under `User 0 → Selection state → Disabled` on both devices. Read-only package queries include OpenTrack360 `MainActivity` for `/s/`, `/p/`, and `/i` on both devices, with Chrome or Brave as browser candidates; unmatched paths exclude the app. The resolver returns `ResolverActivity` on both. A fresh installed implicit-link dispatch attempt was blocked by automatic review. No package was forced and no OS default was changed. App Links acceptance still needs an actual permitted dispatch test and a valid synthetic guest share. Never publish the debug signing certificate.
+- No signed-in account flow or valid guest share was exercised, and no synthetic account or active test link has been created. The production one-time administrator bootstrap is consumed; no existing admin credential was used or changed. The local-only, database-owner-gated synthetic-admin command and migration passed isolated CI, and the migration is applied to production.
+- The Supabase project has no preview branch. [Supabase deployment guidance](https://supabase.com/docs/guides/deployment) says preview branching requires the Pro plan, which would add cost; no paid branch or additional project was created. After authorized admin access is available, provision two disposable synthetic members and run password rotation/disable, Circle isolation, location ingest, valid link revocation, and valid guest reads. No production member records were used as test data.
+- Production synthetic-admin creation remains paused until the separate operator confirms the Supabase secret key rotation. The rotation and Vercel environment update are not performed by this worktree. Once confirmed, the command will save the credentials under `%LOCALAPPDATA%\OpenTrack360\release-test-20261127\operator-credentials.json` with a private ACL.
+- Android's release association is live and domain verification is confirmed by Google and read-only package checks. The Android acceptance report records user link selection disabled on both the emulator and Moto, and the implicit app-launch attempt was blocked by automatic review. A real external messaging-app tap and user-selected app dispatch remain unverified; no app default was forced or changed.
 - FCM receipt testing needs Firebase server credentials and an opted-in test device.
 - Weather and flight feeds remain unavailable until a free commercial source suitable for this product is confirmed. The map uses MapLibre with OpenFreeMap; attribution is required, there is no SLA, and tile requests disclose the viewed map area to the tile provider. See [feature scope](feature-scope.md).
