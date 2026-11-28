@@ -1,6 +1,5 @@
 package me.srishanth.opentrack360.ui.safety
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
@@ -40,6 +39,22 @@ object EmergencyContactInviteIdPolicy {
     }
 }
 
+object GuardianConsentPolicy {
+    fun normalizeConsentId(value: String): String? = normalizeUuid(value)
+
+    fun canRequest(childMemberId: String, guardianUsername: String, relationship: String): Boolean =
+        normalizeUuid(childMemberId) != null &&
+            guardianUsername.trim().length in 3..32 &&
+            relationship in setOf("parent", "guardian")
+
+    private fun normalizeUuid(value: String): String? {
+        val trimmed = value.trim()
+        return runCatching { java.util.UUID.fromString(trimmed).toString() }
+            .getOrNull()
+            ?.takeIf { it.equals(trimmed, ignoreCase = true) }
+    }
+}
+
 data class SosUiState(
     val recipients: List<SosRecipientUi> = emptyList(),
     val pendingInviteIdToShare: String? = null,
@@ -54,6 +69,19 @@ data class SosUiState(
     val countdownSecondsRemaining: Int? = null,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
+)
+
+data class GuardianUiState(
+    val childMemberId: String = "",
+    val guardianUsername: String = "",
+    val relationship: String = "parent",
+    val requestCondition: DataCondition = DataCondition.UNKNOWN,
+    val requestMessage: String = "",
+    val pendingConsentId: String? = null,
+    val pendingGuardianUsername: String? = null,
+    val approvalConsentId: String = "",
+    val approvalCondition: DataCondition = DataCondition.UNKNOWN,
+    val approvalMessage: String = "",
 )
 
 @Composable
@@ -172,14 +200,25 @@ fun PermissionDiagnosticsScreen(
     }
 }
 
-data class GuardianUiState(
-    val childMemberId: String = "",
-    val guardianUsername: String = "",
-    val relationship: String = "parent",
-    val requestCondition: DataCondition = DataCondition.UNKNOWN,
-    val requestMessage: String = "",
-    val verifiedGuardianAccountAvailable: Boolean = false,
+data class PrivacyDeletionSubmission(
+    val reason: String,
+    val details: String,
+    val confirmationPhrase: String,
 )
+
+object PrivacyDeletionRequestPolicy {
+    const val CONFIRMATION_PHRASE = "DELETE MY ACCOUNT"
+    private val allowedReasons = setOf("no_longer_needed", "privacy_concern", "switching_service", "other")
+
+    fun build(reason: String, details: String): PrivacyDeletionSubmission? {
+        if (reason !in allowedReasons) return null
+        return PrivacyDeletionSubmission(
+            reason = reason,
+            details = details.take(500),
+            confirmationPhrase = CONFIRMATION_PHRASE,
+        )
+    }
+}
 
 data class AccountPrivacyUiState(
     val username: String,
@@ -205,6 +244,9 @@ fun AccountPrivacyScreen(
     onGuardianUsernameChange: (String) -> Unit,
     onGuardianRelationshipChange: (String) -> Unit,
     onRequestGuardianConsent: (childMemberId: String, guardianUsername: String, relationship: String) -> Unit,
+    onShareGuardianConsentId: (consentId: String) -> Unit,
+    onGuardianApprovalIdChange: (String) -> Unit,
+    onApproveGuardianConsent: () -> Unit,
     onOpenHelp: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -244,56 +286,85 @@ fun AccountPrivacyScreen(
                 supportingText = { Text("Up to 500 characters. Avoid sensitive information.") },
                 modifier = Modifier.fillMaxWidth(),
             )
+            val deletionSubmission = PrivacyDeletionRequestPolicy.build(state.deletionReason, state.deletionDetails)
             DestructiveActionButton(
                 action = DestructiveAction(DestructiveActionKind.DELETE_ACCOUNT),
                 label = "Request account deletion",
-                onConfirmed = { onRequestAccountDeletion(state.deletionReason, state.deletionDetails.take(500), "DELETE MY ACCOUNT") },
+                onConfirmed = {
+                    deletionSubmission?.let {
+                        onRequestAccountDeletion(it.reason, it.details, it.confirmationPhrase)
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = state.deletionReason in setOf("no_longer_needed", "privacy_concern", "switching_service", "other"),
+                enabled = deletionSubmission != null,
             )
         }
         MemberCard {
             SectionHeading("Guardian consent")
-            if (!state.guardian.verifiedGuardianAccountAvailable) {
-                StatusBanner(
-                    DataCondition.UNAVAILABLE,
-                    "Guardian consent unavailable",
-                    "The API does not yet provide a verified guardian identity and recipient approval flow.",
-                )
-            } else {
-                Text("This flow supports a child account and an already-provisioned, verified guardian account.")
-                OutlinedTextField(
-                    state.guardian.childMemberId,
-                    onGuardianChildIdChange,
-                    label = { Text("Child member ID") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    state.guardian.guardianUsername,
-                    onGuardianUsernameChange,
-                    label = { Text("Guardian username") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text("Relationship")
-                listOf("parent", "guardian").forEach { relationship ->
-                    FilterChip(
-                        selected = state.guardian.relationship == relationship,
-                        onClick = { onGuardianRelationshipChange(relationship) },
-                        label = { Text(relationship.replaceFirstChar { it.uppercase() }) },
-                    )
-                }
-                state.guardian.requestMessage.takeIf(String::isNotBlank)?.let {
-                    StatusBanner(state.guardian.requestCondition, "Consent request", it)
-                }
-                PrimaryAction(
-                    "Request guardian consent",
-                    { onRequestGuardianConsent(state.guardian.childMemberId, state.guardian.guardianUsername, state.guardian.relationship) },
-                    Modifier.fillMaxWidth(),
-                    state.guardian.childMemberId.isNotBlank() && state.guardian.guardianUsername.isNotBlank(),
+            StatusBanner(
+                DataCondition.PENDING,
+                "No pending-consent inbox",
+                "The API does not list pending requests. Share the returned request ID with the named guardian; only that guardian's signed-in account can approve it.",
+            )
+            OutlinedTextField(
+                value = state.guardian.childMemberId,
+                onValueChange = onGuardianChildIdChange,
+                label = { Text("Provisioned child member ID") },
+                supportingText = { Text("Use the child's account ID. The API validates the child and guardian relationship.") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.guardian.guardianUsername,
+                onValueChange = onGuardianUsernameChange,
+                label = { Text("Existing guardian username") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text("Relationship")
+            listOf("parent", "guardian").forEach { relationship ->
+                FilterChip(
+                    selected = state.guardian.relationship == relationship,
+                    onClick = { onGuardianRelationshipChange(relationship) },
+                    label = { Text(relationship.replaceFirstChar { it.uppercase() }) },
                 )
             }
+            state.guardian.requestMessage.takeIf(String::isNotBlank)?.let {
+                StatusBanner(state.guardian.requestCondition, "Guardian request", it)
+            }
+            PrimaryAction(
+                "Request guardian consent",
+                { onRequestGuardianConsent(state.guardian.childMemberId, state.guardian.guardianUsername, state.guardian.relationship) },
+                Modifier.fillMaxWidth(),
+                GuardianConsentPolicy.canRequest(
+                    state.guardian.childMemberId,
+                    state.guardian.guardianUsername,
+                    state.guardian.relationship,
+                ),
+            )
+            state.guardian.pendingConsentId?.let { consentId ->
+                SectionHeading("Share the guardian request ID")
+                Text("Send this ID to ${state.guardian.pendingGuardianUsername ?: "the named guardian"}. It is not a credential; acceptance is checked against the guardian's signed-in account.")
+                LabeledValue("Request ID", consentId)
+                PrimaryAction("Share request ID", { onShareGuardianConsentId(consentId) }, Modifier.fillMaxWidth())
+            }
+            OutlinedTextField(
+                value = state.guardian.approvalConsentId,
+                onValueChange = onGuardianApprovalIdChange,
+                label = { Text("Consent request ID shared with you") },
+                supportingText = { Text("Paste the ID from the child account. The API only allows the designated guardian to approve.") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            state.guardian.approvalMessage.takeIf(String::isNotBlank)?.let {
+                StatusBanner(state.guardian.approvalCondition, "Guardian approval", it)
+            }
+            PrimaryAction(
+                "Approve guardian consent",
+                onApproveGuardianConsent,
+                Modifier.fillMaxWidth(),
+                GuardianConsentPolicy.normalizeConsentId(state.guardian.approvalConsentId) != null,
+            )
         }
         PrimaryAction("Open help", onOpenHelp, Modifier.fillMaxWidth())
         TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }

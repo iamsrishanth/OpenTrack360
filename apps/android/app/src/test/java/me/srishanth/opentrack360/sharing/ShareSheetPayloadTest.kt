@@ -1,6 +1,5 @@
 package me.srishanth.opentrack360.sharing
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -15,7 +14,7 @@ class ShareSheetPayloadTest {
         val payload = ShareSheetPayload.fromCreatedLink(fullLink)
 
         assertNotNull(payload)
-        assertEquals(fullLink, payload?.text)
+        assertTrue("Sharesheet payload should preserve the complete fake fragment link", payload?.text == fullLink)
         assertTrue(payload?.text?.contains("#$secret") == true)
         assertFalse(payload.toString().contains(secret))
     }
@@ -49,6 +48,8 @@ class ShareSheetPayloadTest {
 
     companion object {
         private const val shareId = "f28bd481-5c3c-4ea1-9fa1-0384703c23b0"
-        private const val secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        // Base64url of the explicitly fake string TEST_ONLY_FAKE_SECRET_1234567xyz.
+        private val secret = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("TEST_ONLY_FAKE_SECRET_1234567xyz".toByteArray(Charsets.US_ASCII))
     }
 }

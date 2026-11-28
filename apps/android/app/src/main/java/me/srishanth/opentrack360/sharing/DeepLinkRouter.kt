@@ -7,6 +7,46 @@ import android.content.Intent
  * A valid guest link only returns a read-only request; these functions never touch sender tracking.
  */
 object DeepLinkRouter {
+    /**
+     * The three supported App Link payloads. Credentials remain only in these validated,
+     * transient request objects; callers must not persist this value.
+     */
+    data class IncomingRequests(
+        val guestShare: GuestShareRequest? = null,
+        val petRecovery: PetRecoveryRequest? = null,
+        val circleInvite: CircleInviteRequest? = null,
+    )
+
+    /**
+     * Routes a VIEW URI and clears its source as soon as the result has been handed to the
+     * transient-state callback. This is shared by cold-start and onNewIntent entry points.
+     * Any supplied Intent URI is cleared, including for non-VIEW intents and malformed links,
+     * so credentials cannot remain in the Activity's retained launch Intent. Only VIEW intents
+     * are eligible for routing.
+     */
+    fun routeAndClear(
+        action: String?,
+        rawUri: String?,
+        onRequests: (IncomingRequests) -> Unit,
+        clearRetainedUri: () -> Unit,
+    ) {
+        val requests = if (action == Intent.ACTION_VIEW) {
+            IncomingRequests(
+                guestShare = (GuestShareLinkParser.parse(rawUri) as? GuestLinkParseResult.Valid)?.request,
+                petRecovery = PetRecoveryLinkParser.parse(rawUri),
+                circleInvite = CircleInviteLinkParser.parse(rawUri),
+            )
+        } else {
+            IncomingRequests()
+        }
+
+        try {
+            onRequests(requests)
+        } finally {
+            clearRetainedUri()
+        }
+    }
+
     fun fromColdStart(intent: Intent?): GuestShareRequest? = guestRequestFrom(intent)
 
     fun fromNewIntent(intent: Intent?): GuestShareRequest? = guestRequestFrom(intent)

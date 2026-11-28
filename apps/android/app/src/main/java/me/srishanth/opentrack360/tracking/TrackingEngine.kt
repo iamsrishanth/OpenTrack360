@@ -1,5 +1,9 @@
 package me.srishanth.opentrack360.tracking
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -11,6 +15,196 @@ import kotlin.math.sqrt
 
 enum class MotionEvidence { MOVING, STATIONARY, UNKNOWN }
 enum class TripRole { UNCONFIRMED, DRIVER, PASSENGER }
+
+enum class TrackingLocationProvider { GPS, NETWORK, PASSIVE }
+
+/** Uses every enabled provider allowed by the current precision, including passive fallback. */
+object TrackingLocationProviderPolicy {
+    fun enabledProviders(precision: LocationPrecision, enabled: Set<TrackingLocationProvider>): List<TrackingLocationProvider> {
+        val allowed = when (precision) {
+            LocationPrecision.PRECISE -> listOf(
+                TrackingLocationProvider.GPS,
+                TrackingLocationProvider.NETWORK,
+                TrackingLocationProvider.PASSIVE,
+            )
+            LocationPrecision.APPROXIMATE -> listOf(
+                TrackingLocationProvider.NETWORK,
+                TrackingLocationProvider.PASSIVE,
+            )
+        }
+        return allowed.filter(enabled::contains)
+    }
+}
+
+enum class TrackingInterruptionStatus { NONE, INTERRUPTED }
+
+/** Bounded duplicate guard shared by concurrently registered location providers. */
+class LocationFixDeduplicator(private val maxRememberedFixes: Int = 256) {
+    private data class Key(
+        val capturedAt: Instant,
+        val latitude: Double,
+        val longitude: Double,
+    )
+
+    private val lock = Any()
+    private val seen = LinkedHashSet<Key>()
+
+    init { require(maxRememberedFixes > 0) }
+
+    /** Call after basic sample validation; returns true only for a duplicate provider fix. */
+    fun isDuplicate(sample: LocationSample): Boolean = synchronized(lock) {
+        val capturedAt = sample.instantOrNull() ?: return false
+        val key = Key(capturedAt, sample.latitude, sample.longitude)
+        if (!seen.add(key)) return true
+        while (seen.size > maxRememberedFixes) seen.remove(seen.first())
+        false
+    }
+
+    fun reset() = synchronized(lock) { seen.clear() }
+}
+
+data class TrackingInterruptionMarker(
+    val userId: String,
+    val sessionId: String,
+    val consentGeneration: Long,
+    val sharingEpoch: Long,
+) {
+    init {
+        require(userId.isNotBlank() && sessionId.isNotBlank())
+        require(consentGeneration >= 0 && sharingEpoch >= 0)
+    }
+
+    fun matches(scope: TrackingScope): Boolean =
+        userId == scope.userId && sessionId == scope.sessionId &&
+            consentGeneration == scope.consentGeneration && sharingEpoch == scope.sharingEpoch
+}
+
+/** Encrypted active marker only; it stores no coordinates, samples, trip history, or credentials. */
+class TrackingInterruptionStore(
+    private val storage: TrackingBlobStorage,
+    private val cipher: TrackingQueueCipher,
+) {
+    private val lock = Any()
+    private var marker: TrackingInterruptionMarker? = null
+
+    init {
+        synchronized(lock) {
+            reloadLocked()
+        }
+    }
+
+    fun markActive(scope: TrackingScope): Boolean = markActive(
+        TrackingInterruptionMarker(scope.userId, scope.sessionId, scope.consentGeneration, scope.sharingEpoch),
+    )
+
+    fun markActive(newMarker: TrackingInterruptionMarker): Boolean = synchronized(lock) {
+        reloadLocked()
+        val previous = marker
+        if (previous == newMarker) return true
+        marker = newMarker
+        if (persist()) return true
+        marker = previous
+        runCatching { storage.clear() }
+        false
+    }
+
+    fun hasActiveMarkerFor(userId: String, sessionId: String, consentGeneration: Long, sharingEpoch: Long): Boolean =
+        synchronized(lock) {
+            reloadLocked()
+            marker == TrackingInterruptionMarker(userId, sessionId, consentGeneration, sharingEpoch)
+        }
+
+    fun clearFor(scope: TrackingScope): Boolean = synchronized(lock) {
+        reloadLocked()
+        if (marker?.matches(scope) != true) return true
+        marker = null
+        storage.clear()
+        true
+    }
+
+    fun clearForUser(userId: String): Boolean = synchronized(lock) {
+        reloadLocked()
+        if (marker?.userId != userId) return true
+        marker = null
+        storage.clear()
+        true
+    }
+
+    fun clearAll(): Boolean = synchronized(lock) {
+        marker = null
+        storage.clear()
+        true
+    }
+
+    private fun reloadLocked() {
+        marker = null
+        runCatching {
+            storage.read()?.let { encrypted ->
+                require(encrypted.size <= MAX_CIPHERTEXT_BYTES)
+                decode(cipher.decrypt(encrypted))
+            }
+        }.onFailure {
+            runCatching { storage.clear() }
+            marker = null
+        }
+    }
+
+    private fun persist(): Boolean = runCatching {
+        val marker = checkNotNull(marker)
+        val bytes = ByteArrayOutputStream()
+        DataOutputStream(bytes).use { output ->
+            output.writeInt(FORMAT_VERSION)
+            output.writeUTF(marker.userId)
+            output.writeUTF(marker.sessionId)
+            output.writeLong(marker.consentGeneration)
+            output.writeLong(marker.sharingEpoch)
+        }
+        val encrypted = cipher.encrypt(bytes.toByteArray())
+        encrypted.size <= MAX_CIPHERTEXT_BYTES && storage.write(encrypted)
+    }.getOrDefault(false)
+
+    private fun decode(bytes: ByteArray) {
+        DataInputStream(ByteArrayInputStream(bytes)).use { input ->
+            require(input.readInt() == FORMAT_VERSION)
+            marker = TrackingInterruptionMarker(
+                userId = input.readUTF(),
+                sessionId = input.readUTF(),
+                consentGeneration = input.readLong(),
+                sharingEpoch = input.readLong(),
+            )
+            require(input.available() == 0)
+            require(bytes.size <= MAX_CIPHERTEXT_BYTES)
+        }
+    }
+
+    companion object {
+        const val STORAGE_KEY = "encrypted_tracking_interruption_v1"
+        const val KEYSTORE_ALIAS = "opentrack360.tracking.interruption.v1"
+        private const val FORMAT_VERSION = 1
+        private const val MAX_CIPHERTEXT_BYTES = 2_048
+    }
+}
+
+object TrackingCadencePolicy {
+    // Drive mode uses 30 seconds so the ten-fix event cap can still prove a continuous stop window.
+    const val BATTERY_SAVER_INTERVAL_MS = 30_000L
+    const val BATTERY_SAVER_PARKED_INTERVAL_MS = 60_000L
+    val MAX_DRIVE_EVIDENCE_GAP: Duration = Duration.ofSeconds(60)
+
+    fun intervalMillis(permission: PermissionSnapshot, driving: Boolean): Long = when {
+        permission.batterySaverOn && driving -> BATTERY_SAVER_INTERVAL_MS
+        permission.batterySaverOn -> BATTERY_SAVER_PARKED_INTERVAL_MS
+        permission.precision == LocationPrecision.APPROXIMATE -> 45_000L
+        driving -> 15_000L
+        else -> 45_000L
+    }
+
+    fun minimumDistanceMeters(permission: PermissionSnapshot): Float = when {
+        permission.batterySaverOn -> 0f
+        permission.precision == LocationPrecision.APPROXIMATE -> 25f
+        else -> 10f
+    }
+}
 
 data class DriveStop(val startedAt: String, val durationSeconds: Long)
 
@@ -393,7 +587,7 @@ private class DriveClassifier(private val endThreshold: Duration) {
         const val STOP_COUNT_THRESHOLD_SECONDS = 60L
         val STOP_COUNT_THRESHOLD: Duration = Duration.ofSeconds(STOP_COUNT_THRESHOLD_SECONDS)
         val MAX_MOVEMENT_CANDIDATE_GAP: Duration = Duration.ofSeconds(45)
-        val MAX_CONTINUOUS_FIX_GAP: Duration = Duration.ofSeconds(60)
+        val MAX_CONTINUOUS_FIX_GAP: Duration = TrackingCadencePolicy.MAX_DRIVE_EVIDENCE_GAP
         val MAX_METRIC_GAP: Duration = Duration.ofSeconds(60)
         const val MAX_SINGLE_STEP_METERS = 120.0
         const val MAX_PLAUSIBLE_SPEED_MPS = 80.0

@@ -3,7 +3,6 @@ package me.srishanth.opentrack360.sharing
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CircleInviteLinkParserTest {
@@ -16,16 +15,21 @@ class CircleInviteLinkParserTest {
 
     @Test
     fun rejectsWrongOriginPathQuerySchemeAndMalformedTokens() {
-        assertNull(CircleInviteLinkParser.parse("http://track.srishanth.me/i#$TOKEN"))
-        assertNull(CircleInviteLinkParser.parse("https://attacker.example/i#$TOKEN"))
-        assertNull(CircleInviteLinkParser.parse("https://track.srishanth.me/i/$TOKEN"))
-        assertNull(CircleInviteLinkParser.parse("https://track.srishanth.me/i?inviteToken=$TOKEN#$TOKEN"))
-        assertNull(CircleInviteLinkParser.parse("https://track.srishanth.me/i#short"))
-        assertNull(CircleInviteLinkParser.parse("https://track.srishanth.me/i"))
+        val invalidUris = listOf(
+            "http://track.srishanth.me/i#$TOKEN",
+            "https://attacker.example/i#$TOKEN",
+            "https://track.srishanth.me/i/$TOKEN",
+            "https://track.srishanth.me/i?inviteToken=$TOKEN#$TOKEN",
+            "https://track.srishanth.me/i#short",
+            "https://track.srishanth.me/i",
+        )
+        invalidUris.forEachIndexed { index, uri ->
+            assertNull("Unexpected invite parse for invalid case #$index", CircleInviteLinkParser.parse(uri))
+        }
     }
 
     private companion object {
-        const val TOKEN = "fixture-invite-token-7gGtDRkAgYws-Sw2bHDzSDTd4tOWKQx1Jm2Ts4M5"
-        const val INVITE_URL = "https://track.srishanth.me/i#fixture-invite-token-7gGtDRkAgYws-Sw2bHDzSDTd4tOWKQx1Jm2Ts4M5"
+        const val TOKEN = "test-only-fake-invite-token-for-unit-tests-123456789"
+        const val INVITE_URL = "https://track.srishanth.me/i#$TOKEN"
     }
 }

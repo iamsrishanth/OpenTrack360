@@ -3,32 +3,51 @@ package me.srishanth.opentrack360.tracking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class LocationProviderPolicyTest {
+class TrackingLocationProviderPolicyTest {
     @Test
-    fun preciseLocationRegistersGpsAndNetworkWhenBothAreEnabled() {
+    fun preciseLocationUsesEveryEnabledPermittedProviderIncludingPassiveFallback() {
         assertEquals(
-            listOf(LocationProviderPolicy.GPS_PROVIDER, LocationProviderPolicy.NETWORK_PROVIDER),
-            LocationProviderPolicy.select(setOf("gps", "network", "passive"), precisePermission = true),
+            listOf(TrackingLocationProvider.GPS, TrackingLocationProvider.NETWORK, TrackingLocationProvider.PASSIVE),
+            TrackingLocationProviderPolicy.enabledProviders(
+                LocationPrecision.PRECISE,
+                setOf(TrackingLocationProvider.GPS, TrackingLocationProvider.NETWORK, TrackingLocationProvider.PASSIVE),
+            ),
         )
     }
 
     @Test
     fun approximateLocationNeverRegistersGpsAndCanFallBackToPassive() {
         assertEquals(
-            listOf(LocationProviderPolicy.NETWORK_PROVIDER, LocationProviderPolicy.PASSIVE_PROVIDER),
-            LocationProviderPolicy.select(setOf("gps", "network", "passive"), precisePermission = false),
+            listOf(TrackingLocationProvider.NETWORK, TrackingLocationProvider.PASSIVE),
+            TrackingLocationProviderPolicy.enabledProviders(
+                LocationPrecision.APPROXIMATE,
+                setOf(TrackingLocationProvider.GPS, TrackingLocationProvider.NETWORK, TrackingLocationProvider.PASSIVE),
+            ),
         )
         assertEquals(
-            listOf(LocationProviderPolicy.PASSIVE_PROVIDER),
-            LocationProviderPolicy.select(setOf("gps", "passive"), precisePermission = false),
+            listOf(TrackingLocationProvider.PASSIVE),
+            TrackingLocationProviderPolicy.enabledProviders(
+                LocationPrecision.APPROXIMATE,
+                setOf(TrackingLocationProvider.GPS, TrackingLocationProvider.PASSIVE),
+            ),
         )
     }
 
     @Test
-    fun reportsNoCandidateWhenNoPermittedProviderIsEnabled() {
+    fun preciseLocationFallsBackToAnyEnabledPermittedProvider() {
         assertEquals(
-            emptyList<String>(),
-            LocationProviderPolicy.select(setOf("gps"), precisePermission = false),
+            listOf(TrackingLocationProvider.NETWORK),
+            TrackingLocationProviderPolicy.enabledProviders(
+                LocationPrecision.PRECISE,
+                setOf(TrackingLocationProvider.NETWORK),
+            ),
+        )
+        assertEquals(
+            emptyList<TrackingLocationProvider>(),
+            TrackingLocationProviderPolicy.enabledProviders(
+                LocationPrecision.APPROXIMATE,
+                setOf(TrackingLocationProvider.GPS),
+            ),
         )
     }
 }

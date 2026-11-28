@@ -129,7 +129,9 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var engine = TrackingEngine()
     private val arrivalDetector = DestinationArrivalDetector()
+    private val fixDeduplicator = LocationFixDeduplicator()
     private val motionTracker = AccelerometerMotionTracker()
+    private lateinit var interruptionStore: TrackingInterruptionStore
     private var runtime: TrackingRuntime? = null
     private var sync: TrackingSyncCoordinator? = null
     private var locationManager: LocationManager? = null
@@ -165,6 +167,10 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        interruptionStore = TrackingInterruptionStore(
+            SharedPreferencesTrackingBlobStorage(this, TrackingInterruptionStore.STORAGE_KEY),
+            AndroidKeystoreTrackingQueueCipher(TrackingInterruptionStore.KEYSTORE_ALIAS),
+        )
         locationManager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -222,7 +228,9 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
 
     private fun stopForLogoutLocally() {
         val installed = runtime ?: runCatching { TrackingRuntimeRegistry.provider?.create(this) }.getOrNull()
+        val scope = activeScope ?: runCatching { installed?.scopeProvider() }.getOrNull()
         stopLocationCollection()
+        if (scope != null) runCatching { interruptionStore.clearForUser(scope.userId) } else runCatching { interruptionStore.clearAll() }
         installed?.onGlobalStop?.invoke()
         installed?.queue?.invalidatePrivateRecords()
         waitingForStopSync = false
@@ -265,6 +273,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             return
         }
         activeScope = scope
+        fixDeduplicator.reset()
         currentPermission = permission
         started = true
         lastRequestedDriveMode = false
@@ -303,6 +312,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             installed.queue.invalidatePrivateRecords()
             removeLocationUpdates()
             engine.stop()
+            fixDeduplicator.reset()
             activeScope = latestScope
             val restarted = engine.start(latestScope, permission, consentEnabled, explicitUserAction = true)
             if (!restarted) {
@@ -334,14 +344,17 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         val installed = runtime ?: return
         val scope = activeScope ?: return
         val permission = currentPermission ?: return
+        if (!location.hasAccuracy() || location.time <= 0L) return
         val sample = LocationSample.create(
-            capturedAt = Instant.ofEpochMilli(location.time.takeIf { it > 0L } ?: System.currentTimeMillis()),
+            capturedAt = Instant.ofEpochMilli(location.time),
             latitude = location.latitude,
             longitude = location.longitude,
             accuracyMeters = location.accuracy.toDouble(),
             speedMps = if (location.hasSpeed()) location.speed.toDouble() else null,
         )
-        val result = engine.onLocation(scope, permission, installed.sharingConsentEnabled(), sample, motionTracker.current(), Instant.now())
+        val capturedNow = Instant.now()
+        if (LocationSampleValidator.validate(sample, capturedNow) != null || fixDeduplicator.isDuplicate(sample)) return
+        val result = engine.onLocation(scope, permission, installed.sharingConsentEnabled(), sample, motionTracker.current(), capturedNow)
         if (result !is LocationProcessResult.Accepted) return
         if (arrivalScope?.sameCaptureScope(scope) != true) {
             arrivalDetector.reset()
@@ -415,6 +428,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         }
         val scope = activeScope ?: runCatching { installed?.scopeProvider() }.getOrNull()
         stopLocationCollection()
+        if (scope != null) runCatching { interruptionStore.clearForUser(scope.userId) } else runCatching { interruptionStore.clearAll() }
         installed?.onGlobalStop?.invoke()
         waitingForStopSync = false
         val persisted = scope?.let { sync?.stopAllLocally(it) } ?: false
@@ -437,6 +451,8 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     }
 
     private fun invalidateAndStop(status: TrackingStatus) {
+        val scope = activeScope ?: runCatching { runtime?.scopeProvider() }.getOrNull()
+        if (scope != null) runCatching { interruptionStore.clearForUser(scope.userId) } else runCatching { interruptionStore.clearAll() }
         runtime?.queue?.invalidatePrivateRecords()
         runtime?.onTrackingStatus?.invoke(status)
         stopLocationCollection()
@@ -446,12 +462,14 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     private fun stopLocationCollection() {
         started = false
         engine.stop()
+        fixDeduplicator.reset()
         arrivalDetector.reset()
         arrivalScope = null
         removeLocationUpdates()
         stopMotionSensor()
         mainHandler.removeCallbacks(permissionWatch)
         activeScope = null
+        currentPermission = null
     }
 
     private fun flushQueue(scopeOverride: TrackingScope? = null, stopAfterOneAttempt: Boolean = false) {
@@ -494,6 +512,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             }
             if (stopAfterOneAttempt) mainHandler.post {
                 pendingStopScope = null
+                clearInterruptionMarker()
                 installed.onTrackingStatus(TrackingStatus.STOPPED)
                 stopSelf()
             }
@@ -509,23 +528,20 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
             invalidateAndStop(TrackingStatus.PERMISSION_LOST)
             return
         }
-        val providers = LocationProviderPolicy.select(
-            enabledProviders = enabledProviders,
-            precisePermission = hasFine && permission.precision == LocationPrecision.PRECISE,
-        )
+        val precisePermission = hasFine && permission.precision == LocationPrecision.PRECISE
+        val availableProviders = enabledProviders.mapNotNull(::trackingProvider).toSet()
+        val providers = TrackingLocationProviderPolicy.enabledProviders(
+            precision = if (precisePermission) LocationPrecision.PRECISE else LocationPrecision.APPROXIMATE,
+            enabled = availableProviders,
+        ).map(::androidProviderName)
         if (providers.isEmpty()) {
             runtime?.onTrackingStatus?.invoke(TrackingStatus.LOCATION_UNAVAILABLE)
             updateNotification(TrackingStatus.LOCATION_UNAVAILABLE)
             return
         }
-        val driving = engine.isDriveActive
-        val interval = when {
-            permission.batterySaverOn -> BATTERY_SAVER_INTERVAL_MS
-            permission.precision == LocationPrecision.APPROXIMATE -> APPROXIMATE_INTERVAL_MS
-            driving -> DRIVE_INTERVAL_MS
-            else -> PARKED_INTERVAL_MS
-        }
-        val minDistance = if (permission.precision == LocationPrecision.APPROXIMATE) APPROXIMATE_MIN_DISTANCE_METERS else PRECISE_MIN_DISTANCE_METERS
+        val interval = TrackingCadencePolicy.intervalMillis(permission, engine.isDriveActive)
+        // Repeated stopped fixes support the five-minute drive-end window while battery saver is on.
+        val minDistance = TrackingCadencePolicy.minimumDistanceMeters(permission)
         var registeredProviders = 0
         var permissionFailure = false
         for (provider in providers) {
@@ -549,6 +565,19 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
 
     private fun removeLocationUpdates() {
         runCatching { locationManager?.removeUpdates(this) }
+    }
+
+    private fun trackingProvider(provider: String): TrackingLocationProvider? = when (provider) {
+        LocationManager.GPS_PROVIDER -> TrackingLocationProvider.GPS
+        LocationManager.NETWORK_PROVIDER -> TrackingLocationProvider.NETWORK
+        LocationManager.PASSIVE_PROVIDER -> TrackingLocationProvider.PASSIVE
+        else -> null
+    }
+
+    private fun androidProviderName(provider: TrackingLocationProvider): String = when (provider) {
+        TrackingLocationProvider.GPS -> LocationManager.GPS_PROVIDER
+        TrackingLocationProvider.NETWORK -> LocationManager.NETWORK_PROVIDER
+        TrackingLocationProvider.PASSIVE -> LocationManager.PASSIVE_PROVIDER
     }
 
     private fun startMotionSensor() {
@@ -672,6 +701,7 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         waitingForStopSync = false
         mainHandler.removeCallbacks(stopRetry)
         unregisterNetworkCallback()
+        clearInterruptionMarker()
         stopLocationCollection()
         stopForeground(STOP_FOREGROUND_REMOVE)
         runtime?.onTrackingStatus?.invoke(finalStatus)
@@ -681,11 +711,15 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     override fun onLocationChanged(location: Location) = onLocation(location)
     override fun onLocationChanged(locations: MutableList<Location>) { locations.forEach(::onLocation) }
     override fun onProviderDisabled(provider: String) {
-        runtime?.onTrackingStatus?.invoke(TrackingStatus.LOCATION_UNAVAILABLE)
-        updateNotification(TrackingStatus.LOCATION_UNAVAILABLE)
+        if (!started) return
+        currentPermission?.let(::requestLocationUpdates)
+            ?: run {
+                runtime?.onTrackingStatus?.invoke(TrackingStatus.LOCATION_UNAVAILABLE)
+                updateNotification(TrackingStatus.LOCATION_UNAVAILABLE)
+            }
     }
     override fun onProviderEnabled(provider: String) {
-        currentPermission?.let(::requestLocationUpdates)
+        if (started) currentPermission?.let(::requestLocationUpdates)
     }
     @Deprecated("Deprecated by Android API; kept for platform callback compatibility")
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
@@ -700,11 +734,19 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        val wasInterrupted = started && activeScope != null
         mainHandler.removeCallbacksAndMessages(null)
         unregisterNetworkCallback()
+        if (wasInterrupted) runtime?.onTrackingStatus?.invoke(TrackingStatus.STOPPED)
         stopLocationCollection()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    private fun clearInterruptionMarker() {
+        val scope = activeScope ?: pendingStopScope ?: runCatching { runtime?.scopeProvider() }.getOrNull()
+        if (scope != null) runCatching { interruptionStore.clearForUser(scope.userId) }
+        else runCatching { interruptionStore.clearAll() }
     }
 
     companion object {
@@ -717,12 +759,6 @@ class LocationForegroundService : Service(), LocationListener, SensorEventListen
         private const val NOTIFICATION_ID = 3601
         private const val STOP_PENDING_INTENT_REQUEST = 3602
         private const val NOTIFICATION_CHANNEL_ID = "location_sharing"
-        private const val DRIVE_INTERVAL_MS = 15_000L
-        private const val PARKED_INTERVAL_MS = 45_000L
-        private const val APPROXIMATE_INTERVAL_MS = 45_000L
-        private const val BATTERY_SAVER_INTERVAL_MS = 60_000L
-        private const val PRECISE_MIN_DISTANCE_METERS = 10f
-        private const val APPROXIMATE_MIN_DISTANCE_METERS = 25f
         private const val PERMISSION_WATCH_INTERVAL_MS = 15_000L
         private const val STOP_RETRY_INTERVAL_MS = 30_000L
     }

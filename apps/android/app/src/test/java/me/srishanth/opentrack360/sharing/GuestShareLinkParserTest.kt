@@ -24,10 +24,14 @@ class GuestShareLinkParserTest {
         assertNull(httpRequest.url.rawQuery)
         assertNull(httpRequest.url.rawFragment)
         assertFalse(httpRequest.url.toString().contains(secret))
-        assertEquals("Bearer $secret", httpRequest.header("Authorization"))
-        assertEquals(
-            "Bearer $secret",
-            authorizationHeaderForRequest(bearer = null, authorizationHeader = httpRequest.header("Authorization")),
+        assertTrue(
+            "share authorization header should match the fake test credential",
+            httpRequest.header("Authorization") == "Bearer $secret",
+        )
+        assertTrue(
+            "share authorization fallback should match the fake test credential",
+            authorizationHeaderForRequest(bearer = null, authorizationHeader = httpRequest.header("Authorization")) ==
+                "Bearer $secret",
         )
         assertFalse(httpRequest.toString().contains(secret))
     }
@@ -64,12 +68,14 @@ class GuestShareLinkParserTest {
 
     private fun assertInvalid(url: String, expectedReason: GuestLinkInvalidReason) {
         val result = GuestShareLinkParser.parse(url)
-        assertEquals(GuestLinkParseResult.Invalid(expectedReason), result)
+        assertEquals("unexpected result for guest rejection case $expectedReason", GuestLinkParseResult.Invalid(expectedReason), result)
     }
 
     companion object {
         private const val shareId = "f28bd481-5c3c-4ea1-9fa1-0384703c23b0"
-        private const val secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        private const val validLink = "https://track.srishanth.me/s/$shareId#$secret"
+        // Base64url of the explicitly fake string TEST_ONLY_FAKE_SECRET_1234567xyz.
+        private val secret = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("TEST_ONLY_FAKE_SECRET_1234567xyz".toByteArray(Charsets.US_ASCII))
+        private val validLink = "https://track.srishanth.me/s/$shareId#$secret"
     }
 }

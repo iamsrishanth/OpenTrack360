@@ -8,10 +8,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import me.srishanth.opentrack360.sharing.DeepLinkRouter
-import me.srishanth.opentrack360.sharing.CircleInviteLinkParser
 import me.srishanth.opentrack360.sharing.CircleInviteRequest
 import me.srishanth.opentrack360.sharing.GuestShareRequest
-import me.srishanth.opentrack360.sharing.PetRecoveryLinkParser
 import me.srishanth.opentrack360.sharing.PetRecoveryRequest
 import me.srishanth.opentrack360.ui.theme.OpenTrackTheme
 
@@ -45,9 +43,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun routeIncomingIntent(incoming: Intent?) {
-        guestRequest = DeepLinkRouter.fromColdStart(incoming)
-        petRecoveryRequest = PetRecoveryLinkParser.fromIntent(incoming)
-        circleInviteRequest = CircleInviteLinkParser.fromIntent(incoming)
+        DeepLinkRouter.routeAndClear(
+            action = incoming?.action,
+            rawUri = incoming?.dataString,
+            onRequests = { requests ->
+                guestRequest = requests.guestShare
+                petRecoveryRequest = requests.petRecovery
+                circleInviteRequest = requests.circleInvite
+            },
+            clearRetainedUri = { incoming?.data = null },
+        )
 
         // Keep only the validated transient request in Compose state. The Activity's retained
         // launch Intent must not keep a share, invite, or recovery secret after parsing.

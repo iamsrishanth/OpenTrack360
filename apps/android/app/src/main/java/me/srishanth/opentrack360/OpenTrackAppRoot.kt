@@ -4,10 +4,12 @@ import android.Manifest
 import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -60,10 +62,14 @@ import me.srishanth.opentrack360.sharing.ShareManagementScreen
 import me.srishanth.opentrack360.pets.reminders.PetRoutineReminderScheduler
 import me.srishanth.opentrack360.pets.reminders.PetRoutineReminderSpec
 import me.srishanth.opentrack360.tracking.AndroidPermissionProbe
+import me.srishanth.opentrack360.tracking.AndroidKeystoreTrackingQueueCipher
 import me.srishanth.opentrack360.tracking.DriveUpdate
 import me.srishanth.opentrack360.tracking.LocationPrecision
+import me.srishanth.opentrack360.tracking.TrackingBlobStorage
+import me.srishanth.opentrack360.tracking.TrackingQueueCipher
 import me.srishanth.opentrack360.tracking.TrackingServiceController
 import me.srishanth.opentrack360.tracking.TrackingStartResult
+import me.srishanth.opentrack360.tracking.TrackingInterruptionStatus
 import me.srishanth.opentrack360.tracking.TrackingStatus
 import me.srishanth.opentrack360.ui.accounts.AccountRecoveryHelpScreen
 import me.srishanth.opentrack360.ui.accounts.PasswordChangeSettingsScreen
@@ -140,6 +146,9 @@ import me.srishanth.opentrack360.ui.pets.PublicPetRecoveryUiState
 import me.srishanth.opentrack360.ui.safety.AccountPrivacyScreen
 import me.srishanth.opentrack360.ui.safety.AccountPrivacyUiState
 import me.srishanth.opentrack360.ui.safety.EmergencyContactInviteIdPolicy
+import me.srishanth.opentrack360.ui.safety.GuardianConsentPolicy
+import me.srishanth.opentrack360.ui.safety.GuardianUiState
+import me.srishanth.opentrack360.ui.safety.PrivacyDeletionRequestPolicy
 import me.srishanth.opentrack360.ui.safety.PermissionDiagnosticsScreen
 import me.srishanth.opentrack360.ui.safety.SafetyAvailabilityScreen
 import me.srishanth.opentrack360.ui.safety.SosRecipientUi
@@ -160,7 +169,12 @@ import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.util.Locale
+import java.util.UUID
 
 private enum class AppPage(val label: String) {
     CIRCLES("Circles"), SHARES("Share trip"), TOOLS("Tools"), ACCOUNT("Account"),
@@ -183,8 +197,18 @@ fun OpenTrackAppRoot(
     onCloseCircleInvite: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val lostPetReportIdStore = remember(activity.applicationContext) {
+        OwnerScopedLostPetReportIdStore(
+            storage = LostPetReportIdPreferencesStorage(
+                activity.applicationContext,
+                OwnerScopedLostPetReportIdStore.STORAGE_KEY,
+            ),
+            cipher = AndroidKeystoreTrackingQueueCipher(OwnerScopedLostPetReportIdStore.KEY_ALIAS),
+        )
+    }
     val petReminderScheduler = remember(activity.applicationContext) { PetRoutineReminderScheduler(activity.applicationContext) }
     val trackingStatus by runtime.trackingStatus.collectAsState()
+    val trackingInterruptionStatus by runtime.trackingInterruptionStatus.collectAsState()
     val latestDriveUpdate by runtime.latestDriveUpdate.collectAsState()
     val latestLocalDriveTrip = when (val update = latestDriveUpdate) {
         is DriveUpdate.Started -> update.trip
@@ -205,6 +229,7 @@ fun OpenTrackAppRoot(
     var accountMessage by remember { mutableStateOf<String?>(null) }
     var deletionReason by remember { mutableStateOf("privacy_concern") }
     var deletionDetails by remember { mutableStateOf("") }
+    var guardianUiState by remember { mutableStateOf(GuardianUiState()) }
     var reminderNotificationsEnabled by remember { mutableStateOf<Boolean?>(null) }
     var circleState by remember { mutableStateOf(CircleHomeUiState()) }
     var selectedCircleId by remember { mutableStateOf<String?>(null) }
@@ -262,6 +287,8 @@ fun OpenTrackAppRoot(
     var pets by remember { mutableStateOf<List<PetUi>>(emptyList()) }
     var selectedPetId by remember { mutableStateOf<String?>(null) }
     var activeLostPetReportIds by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var activeLostPetReportIdsOwner by remember { mutableStateOf<String?>(null) }
+    var lostPetReportIdStoreWarning by remember { mutableStateOf(false) }
     var petDetail by remember { mutableStateOf<PetDetailUiState?>(null) }
     var petRecoveryUrl by remember { mutableStateOf<String?>(null) }
     var petName by remember { mutableStateOf("") }
@@ -289,7 +316,10 @@ fun OpenTrackAppRoot(
 
     DisposableEffect(activity) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) reminderNotificationsEnabled = null
+            if (event == Lifecycle.Event.ON_RESUME) {
+                reminderNotificationsEnabled = null
+                scope.launch(Dispatchers.IO) { runtime.refreshTrackingInterruptionStatus() }
+            }
         }
         activity.lifecycle.addObserver(observer)
         onDispose { activity.lifecycle.removeObserver(observer) }
@@ -478,6 +508,9 @@ fun OpenTrackAppRoot(
     LaunchedEffect(session?.memberId, booting) {
         if (!booting && session == null) petReminderScheduler.clearAll()
         if (session == null) {
+            activeLostPetReportIds = emptyMap()
+            activeLostPetReportIdsOwner = null
+            lostPetReportIdStoreWarning = false
             pendingCircleInviteUrl = null
             pendingCircleInviteCircleId = null
         }
@@ -842,6 +875,20 @@ fun OpenTrackAppRoot(
                         isOwner = false
                         JSONObject()
                     }
+                    val reportIdRestore = if (isOwner) {
+                        withContext(Dispatchers.IO) { lostPetReportIdStore.restore(current.memberId) }
+                    } else {
+                        OwnerScopedLostPetReportIdRestore(emptyMap(), available = true)
+                    }
+                    if (isOwner) {
+                        val sameOwner = activeLostPetReportIdsOwner == current.memberId
+                        val currentSessionIds = if (sameOwner) activeLostPetReportIds else emptyMap()
+                        activeLostPetReportIds = reportIdRestore.reportIds + currentSessionIds
+                        activeLostPetReportIdsOwner = current.memberId
+                        lostPetReportIdStoreWarning = !reportIdRestore.available || (sameOwner && lostPetReportIdStoreWarning)
+                    }
+                    val activeReportId = reportIdRestore.reportIds[pet.id]
+                        ?: activeLostPetReportIds.takeIf { activeLostPetReportIdsOwner == current.memberId }?.get(pet.id)
                     val routineTitlesById = buildMap {
                         for (index in 0 until routines.length()) {
                             val row = routines.optJSONObject(index) ?: continue
@@ -897,13 +944,18 @@ fun OpenTrackAppRoot(
                         } },
                         activity = activityItems,
                         condition = DataCondition.CONFIRMED,
-                        message = if (isOwner) "Your pet profile, recovery settings, routines and activity are loaded."
-                            else "Shared pet profile, routines and activity are loaded. Owner-only recovery settings are hidden.",
+                        message = when {
+                            !isOwner -> "Shared pet profile, routines and activity are loaded. Owner-only recovery settings are hidden."
+                            !reportIdRestore.available && activeReportId != null -> "This report ID is available for this session, but the encrypted cache could not be read or updated. It may be lost when the app closes."
+                            !reportIdRestore.available -> "Your pet data is loaded, but saved lost-pet report IDs could not be read. An existing report may still be active and cannot be revoked here."
+                            activeReportId != null -> "Your pet data is loaded. This report ID is stored encrypted on this device; the API cannot restore it after app data or device changes."
+                            else -> "Your pet profile, recovery settings, routines and activity are loaded. The API does not provide a lost-pet report list to restore IDs after app data or device changes."
+                        },
                         recoveryFields = (profileJson.optJSONArray("recoveryFields") ?: JSONArray()).let { fields -> (0 until fields.length()).map { fields.optString(it) }.toSet() },
                         ownerMessage = profileJson.optString("ownerMessage", ""),
                         contactRoute = profileJson.optString("contactRoute", ""),
                         recoveryLinkCreatedAt = profileJson.optNullableString("recoveryLinkCreatedAt")?.let(::formatLocalTime),
-                        activeLostPetReportId = activeLostPetReportIds[pet.id],
+                        activeLostPetReportId = activeReportId,
                     )
                 }
                 AppPage.SOS -> {
@@ -1191,6 +1243,16 @@ fun OpenTrackAppRoot(
                 if (permissionSummary != null) {
                     StatusBanner(DataCondition.PENDING, "Location sharing", permissionSummary!!)
                 }
+                if (
+                    trackingInterruptionStatus == TrackingInterruptionStatus.INTERRUPTED &&
+                    page in setOf(AppPage.CIRCLES, AppPage.SHARES, AppPage.TRIPS, AppPage.DRIVING)
+                ) {
+                    StatusBanner(
+                        DataCondition.OFFLINE,
+                        "Location tracking interrupted",
+                        "Location collection stopped unexpectedly. No new phone fixes are being collected, and tracking will not restart automatically. Review permissions, then choose Start sharing when you are ready.",
+                    )
+                }
                 when (page) {
                     AppPage.CIRCLES -> CircleHomeScreen(
                         state = circleState,
@@ -1271,6 +1333,7 @@ fun OpenTrackAppRoot(
                             username = session!!.username,
                             sessionStateLabel = "Signed in",
                             sharingSummary = if (runtime.sharingIsEnabled(session!!.memberId)) "Location collection enabled on this device" else "Location collection off",
+                            guardian = guardianUiState,
                             deletionReason = deletionReason,
                             deletionDetails = deletionDetails,
                         ),
@@ -1282,11 +1345,17 @@ fun OpenTrackAppRoot(
                         onDeletionReasonChange = { deletionReason = it },
                         onDeletionDetailsChange = { deletionDetails = it.take(500) },
                         onRequestAccountDeletion = { reason, details, phrase ->
-                            scope.launch {
+                            val request = PrivacyDeletionRequestPolicy.build(reason, details)
+                            if (request == null || phrase != request.confirmationPhrase) {
+                                accountMessage = "Deletion request needs a supported reason and the exact confirmation phrase."
+                            } else scope.launch {
                                 runCatching {
                                     runtime.api.memberPost(
                                         "privacy/deletion",
-                                        JSONObject().put("reason", reason).put("details", details).put("confirmationPhrase", phrase),
+                                        JSONObject()
+                                            .put("reason", request.reason)
+                                            .put("details", request.details)
+                                            .put("confirmationPhrase", request.confirmationPhrase),
                                     )
                                 }.onSuccess {
                                     deletionDetails = ""
@@ -1295,14 +1364,96 @@ fun OpenTrackAppRoot(
                                     .onFailure { accountMessage = it.message ?: "Deletion request failed." }
                             }
                         },
-                        onGuardianChildIdChange = {},
-                        onGuardianUsernameChange = {},
-                        onGuardianRelationshipChange = {},
-                        onRequestGuardianConsent = { child, guardian, relation ->
-                            scope.launch {
-                                runCatching { runtime.api.memberPost("guardian-consents", JSONObject().put("childMemberId", child).put("guardianUsername", guardian).put("relationship", relation)) }
-                                    .onSuccess { accountMessage = "Guardian consent request submitted." }
-                                    .onFailure { accountMessage = it.message ?: "Guardian consent request failed." }
+                        onGuardianChildIdChange = { guardianUiState = guardianUiState.copy(childMemberId = it.take(36), requestMessage = "") },
+                        onGuardianUsernameChange = { guardianUiState = guardianUiState.copy(guardianUsername = it.take(32), requestMessage = "") },
+                        onGuardianRelationshipChange = { guardianUiState = guardianUiState.copy(relationship = it, requestMessage = "") },
+                        onRequestGuardianConsent = { childIdInput, guardianUsernameInput, relationship ->
+                            val childId = GuardianConsentPolicy.normalizeConsentId(childIdInput)
+                            val guardianUsername = guardianUsernameInput.trim()
+                            if (childId == null || !GuardianConsentPolicy.canRequest(childId, guardianUsername, relationship)) {
+                                guardianUiState = guardianUiState.copy(
+                                    requestCondition = DataCondition.ERROR,
+                                    requestMessage = "Enter a valid child member UUID, an existing username, and a supported relationship.",
+                                )
+                            } else {
+                                guardianUiState = guardianUiState.copy(
+                                    requestCondition = DataCondition.PENDING,
+                                    requestMessage = "Submitting the request for API validation…",
+                                )
+                                scope.launch {
+                                    runCatching {
+                                        val response = runtime.api.memberPost(
+                                            "guardian-consents",
+                                            JSONObject()
+                                                .put("childMemberId", childId)
+                                                .put("guardianUsername", guardianUsername)
+                                                .put("relationship", relationship),
+                                        )
+                                        val result = response.optJSONObject("data") ?: response
+                                        val consentId = GuardianConsentPolicy.normalizeConsentId(result.optString("id"))
+                                            ?: error("The API did not return a valid consent request ID.")
+                                        require(result.optString("status") == "pending") { "The API did not return a pending consent request." }
+                                        consentId to result.optString("guardianUsername", guardianUsername)
+                                    }.onSuccess { (consentId, verifiedGuardianUsername) ->
+                                        guardianUiState = guardianUiState.copy(
+                                            pendingConsentId = consentId,
+                                            pendingGuardianUsername = verifiedGuardianUsername,
+                                            requestCondition = DataCondition.PENDING,
+                                            requestMessage = "Request created for $verifiedGuardianUsername. Share the request ID; guardian approval is still pending.",
+                                        )
+                                    }.onFailure { error ->
+                                        guardianUiState = guardianUiState.copy(
+                                            requestCondition = DataCondition.ERROR,
+                                            requestMessage = error.message ?: "Guardian consent request failed.",
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        onShareGuardianConsentId = { consentId ->
+                            val guardianUsername = guardianUiState.pendingGuardianUsername ?: "the named guardian"
+                            shareText(
+                                activity,
+                                "OpenTrack360 guardian consent request\n\n" +
+                                    "Request ID: $consentId\n\n" +
+                                    "Sign in to OpenTrack360 as $guardianUsername, open Account and privacy, paste this ID under guardian approval, and approve. Only the designated signed-in guardian can approve it.",
+                            )
+                        },
+                        onGuardianApprovalIdChange = {
+                            guardianUiState = guardianUiState.copy(
+                                approvalConsentId = it.take(36),
+                                approvalCondition = DataCondition.UNKNOWN,
+                                approvalMessage = "",
+                            )
+                        },
+                        onApproveGuardianConsent = {
+                            val consentId = GuardianConsentPolicy.normalizeConsentId(guardianUiState.approvalConsentId)
+                            if (consentId == null) {
+                                guardianUiState = guardianUiState.copy(
+                                    approvalCondition = DataCondition.ERROR,
+                                    approvalMessage = "Enter the consent request UUID shared by the child account.",
+                                )
+                            } else {
+                                guardianUiState = guardianUiState.copy(
+                                    approvalCondition = DataCondition.PENDING,
+                                    approvalMessage = "Checking whether this signed-in account is the designated guardian…",
+                                )
+                                scope.launch {
+                                    runCatching { runtime.api.memberRequest("POST", "guardian-consents/$consentId/approve") }
+                                        .onSuccess {
+                                            guardianUiState = guardianUiState.copy(
+                                                approvalConsentId = "",
+                                                approvalCondition = DataCondition.CONFIRMED,
+                                                approvalMessage = "Approval recorded for this signed-in guardian account.",
+                                            )
+                                        }
+                                        .onFailure { error ->
+                                            guardianUiState = guardianUiState.copy(
+                                                approvalCondition = DataCondition.ERROR,
+                                                approvalMessage = error.message ?: "Guardian approval failed.",
+                                            )
+                                        }
+                                }
                             }
                         },
                         onOpenHelp = { page = AppPage.RECOVERY },
@@ -1317,6 +1468,7 @@ fun OpenTrackAppRoot(
                             access = MemberAccessState.SignedOut
                             deletionReason = "privacy_concern"
                             deletionDetails = ""
+                            guardianUiState = GuardianUiState()
                             sosState = SosUiState()
                             page = AppPage.CIRCLES
                         },
@@ -1901,9 +2053,24 @@ fun OpenTrackAppRoot(
                         },
                         onCreateLostPetReport = { if (state.isOwner) { page = AppPage.LOST_PET; lostPetCircles = emptySet() } },
                         onRevokeLostPetReport = { reportId ->
+                            val ownerMemberId = session?.memberId ?: return@PetDetailScreen
                             if (!state.isOwner) return@PetDetailScreen
+                            val petId = state.pet.id
                             scope.launch { runCatching { runtime.api.memberDelete("lost-pets/${reportId.uuidSegment()}") }
-                                .onSuccess { activeLostPetReportIds = activeLostPetReportIds - (selectedPetId ?: ""); petDetail = petDetail?.copy(activeLostPetReportId = null); accountMessage = "Lost-pet report revoked." }
+                                .onSuccess {
+                                    val cacheUpdated = withContext(Dispatchers.IO) { lostPetReportIdStore.remove(ownerMemberId, petId) }
+                                    activeLostPetReportIds = activeLostPetReportIds - petId
+                                    if (!cacheUpdated) lostPetReportIdStoreWarning = true
+                                    petDetail = petDetail?.copy(
+                                        activeLostPetReportId = null,
+                                        message = if (cacheUpdated) {
+                                            "Lost-pet report revoked. The API does not provide a report list to restore this status after app data or device changes."
+                                        } else {
+                                            "Lost-pet report revoked. Its encrypted local ID could not be cleared; the server revoke is idempotent if the old ID reappears."
+                                        },
+                                    )
+                                    accountMessage = "Lost-pet report revoked."
+                                }
                                 .onFailure { accountMessage = it.message ?: "Lost-pet report could not be revoked." } }
                         },
                         onDeletePet = { id ->
@@ -1922,12 +2089,34 @@ fun OpenTrackAppRoot(
                             audience = circleState.circles.map { AudienceChoiceUi(it.id, it.name, it.id in lostPetCircles) },
                             expiresAt = lostPetExpiresAt,
                             reportMessage = lostPetMessage,
-                            statusMessage = null,
+                            statusMessage = "The revocation ID is stored encrypted on this device. The API cannot list active reports, so clearing app data or changing devices can make an existing report impossible to revoke from the app.",
                             onAudienceSelected = { id, selected -> lostPetCircles = if (selected) lostPetCircles + id else lostPetCircles - id },
                             onExpiresAtChange = { lostPetExpiresAt = it }, onReportMessageChange = { lostPetMessage = it },
                             onSubmitReport = { ids, message, expiresAt ->
+                                val ownerMemberId = session?.memberId ?: return@LostPetReportScreen
                                 scope.launch { runCatching { runtime.api.memberPost("lost-pets", JSONObject().put("petId", pet.id).put("recipientCircleIds", JSONArray(ids)).put("message", message.takeIf(String::isNotBlank) ?: JSONObject.NULL).put("expiresAt", expiresAt)) }
-                                    .onSuccess { result -> val data = result.optJSONObject("data") ?: result; val reportId = data.optString("id"); if (reportId.isNotBlank()) activeLostPetReportIds = activeLostPetReportIds + (pet.id to reportId); petDetail = petDetail?.copy(activeLostPetReportId = reportId.takeIf(String::isNotBlank)); accountMessage = "Lost-pet report sent to the selected Circles. You can revoke it from the pet profile."; page = AppPage.PET_DETAIL }
+                                    .onSuccess { result ->
+                                        val data = result.optJSONObject("data") ?: result
+                                        val reportId = OwnerScopedLostPetReportIdStore.normalizeUuid(data.optString("id"))
+                                        val wasAlreadyUnavailable = lostPetReportIdStoreWarning
+                                        val stored = reportId?.let {
+                                            withContext(Dispatchers.IO) { lostPetReportIdStore.remember(ownerMemberId, pet.id, it) }
+                                        } == true
+                                        if (reportId != null) {
+                                            activeLostPetReportIds = activeLostPetReportIds + (pet.id to reportId)
+                                            activeLostPetReportIdsOwner = ownerMemberId
+                                        }
+                                        if (!stored || wasAlreadyUnavailable) lostPetReportIdStoreWarning = true
+                                        val requestMessage = when {
+                                            reportId == null -> "Lost-pet report was created, but the API did not return a valid report ID. The app cannot revoke it without that ID."
+                                            !stored -> "Lost-pet report sent. Its ID is available for this session but could not be saved securely, so app restart may remove the revoke action."
+                                            wasAlreadyUnavailable -> "Lost-pet report sent and this ID was saved. Earlier saved report IDs could not be read; those reports may still be active and cannot be restored because the API has no report list."
+                                            else -> "Lost-pet report sent. Its ID is saved encrypted on this device for revocation; the API cannot restore it after app data or device changes."
+                                        }
+                                        petDetail = petDetail?.copy(activeLostPetReportId = reportId, message = requestMessage)
+                                        accountMessage = requestMessage
+                                        page = AppPage.PET_DETAIL
+                                    }
                                     .onFailure { accountMessage = it.message ?: "Lost-pet report could not be submitted." } }
                             },
                             onCancel = { page = AppPage.PET_DETAIL },
@@ -2269,4 +2458,145 @@ private fun TrackingStatus?.isActiveTrackingStatus(): Boolean = this in setOf(
     TrackingStatus.BACKGROUND_ACCESS_LIMITED,
     TrackingStatus.BATTERY_SAVER_LIMITED,
 )
+
+internal data class OwnerScopedLostPetReportIdRestore(
+    val reportIds: Map<String, String>,
+    val available: Boolean,
+)
+
+private class LostPetReportIdPreferencesStorage(
+    context: Context,
+    private val key: String,
+) : TrackingBlobStorage {
+    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    override fun read(): ByteArray? = preferences.getString(key, null)?.let { Base64.decode(it, Base64.NO_WRAP) }
+
+    override fun write(value: ByteArray): Boolean = preferences.edit()
+        .putString(key, Base64.encodeToString(value, Base64.NO_WRAP))
+        .commit()
+
+    override fun clear() {
+        check(preferences.edit().remove(key).commit()) { "Unable to clear encrypted lost-pet report IDs" }
+    }
+
+    private companion object {
+        const val PREFERENCES = "opentrack360_lost_pet_report_ids"
+    }
+}
+
+/** Stores only owner/pet/report UUIDs, encrypted by the Android Keystore-backed cipher. */
+internal class OwnerScopedLostPetReportIdStore(
+    private val storage: TrackingBlobStorage,
+    private val cipher: TrackingQueueCipher,
+) {
+    @Synchronized
+    fun restore(ownerMemberId: String): OwnerScopedLostPetReportIdRestore {
+        val ownerId = normalizeUuid(ownerMemberId)
+            ?: return OwnerScopedLostPetReportIdRestore(emptyMap(), available = false)
+        val loaded = readRecords()
+        return OwnerScopedLostPetReportIdRestore(
+            reportIds = loaded.records.asSequence()
+                .filter { it.ownerMemberId == ownerId }
+                .associate { it.petId to it.reportId },
+            available = loaded.available,
+        )
+    }
+
+    @Synchronized
+    fun remember(ownerMemberId: String, petId: String, reportId: String): Boolean {
+        val ownerId = normalizeUuid(ownerMemberId) ?: return false
+        val normalizedPetId = normalizeUuid(petId) ?: return false
+        val normalizedReportId = normalizeUuid(reportId) ?: return false
+        val loaded = readRecords()
+        if (!loaded.available) return false
+        val retained = loaded.records.filterNot { it.ownerMemberId == ownerId && it.petId == normalizedPetId }
+        if (retained.size >= MAX_RECORDS) return false
+        return writeRecords(retained + LostPetReportIdRecord(ownerId, normalizedPetId, normalizedReportId))
+    }
+
+    @Synchronized
+    fun remove(ownerMemberId: String, petId: String): Boolean {
+        val ownerId = normalizeUuid(ownerMemberId) ?: return false
+        val normalizedPetId = normalizeUuid(petId) ?: return false
+        val loaded = readRecords()
+        if (!loaded.available) return false
+        val retained = loaded.records.filterNot { it.ownerMemberId == ownerId && it.petId == normalizedPetId }
+        return writeRecords(retained)
+    }
+
+    private fun readRecords(): ReadResult {
+        val encrypted = runCatching { storage.read() }.getOrElse { return ReadResult(emptyList(), available = false) }
+            ?: return ReadResult(emptyList(), available = true)
+        if (encrypted.size > MAX_CIPHERTEXT_BYTES) return ReadResult(emptyList(), available = false)
+        val records = runCatching { decode(cipher.decrypt(encrypted)) }
+            .getOrElse { return ReadResult(emptyList(), available = false) }
+        return ReadResult(records, available = true)
+    }
+
+    private fun writeRecords(records: List<LostPetReportIdRecord>): Boolean {
+        if (records.isEmpty()) {
+            return runCatching { storage.clear(); true }.getOrDefault(false)
+        }
+        if (records.size > MAX_RECORDS) return false
+        return runCatching { storage.write(cipher.encrypt(encode(records))) }.getOrDefault(false)
+    }
+
+    private fun encode(records: List<LostPetReportIdRecord>): ByteArray = ByteArrayOutputStream().use { bytes ->
+        DataOutputStream(bytes).use { output ->
+            output.writeInt(MAGIC)
+            output.writeInt(records.size)
+            records.forEach { record ->
+                output.writeUTF(record.ownerMemberId)
+                output.writeUTF(record.petId)
+                output.writeUTF(record.reportId)
+            }
+        }
+        bytes.toByteArray()
+    }
+
+    private fun decode(bytes: ByteArray): List<LostPetReportIdRecord> {
+        require(bytes.size <= MAX_PLAINTEXT_BYTES)
+        return DataInputStream(ByteArrayInputStream(bytes)).use { input ->
+            require(input.readInt() == MAGIC)
+            val count = input.readInt()
+            require(count in 0..MAX_RECORDS)
+            val records = buildList {
+                repeat(count) {
+                    val ownerId = normalizeUuid(input.readUTF()) ?: error("Invalid owner ID")
+                    val petId = normalizeUuid(input.readUTF()) ?: error("Invalid pet ID")
+                    val reportId = normalizeUuid(input.readUTF()) ?: error("Invalid report ID")
+                    add(LostPetReportIdRecord(ownerId, petId, reportId))
+                }
+            }
+            require(input.available() == 0)
+            require(records.distinctBy { it.ownerMemberId to it.petId }.size == records.size)
+            records
+        }
+    }
+
+    private data class LostPetReportIdRecord(
+        val ownerMemberId: String,
+        val petId: String,
+        val reportId: String,
+    )
+
+    private data class ReadResult(val records: List<LostPetReportIdRecord>, val available: Boolean)
+
+    companion object {
+        const val STORAGE_KEY = "encrypted_lost_pet_report_ids_v1"
+        const val KEY_ALIAS = "opentrack360.lost_pet_reports.v1"
+        private const val MAGIC = 0x4F543336 // OT36
+        private const val MAX_RECORDS = 64
+        private const val MAX_PLAINTEXT_BYTES = 8 * 1024
+        private const val MAX_CIPHERTEXT_BYTES = MAX_PLAINTEXT_BYTES + 64
+
+        fun normalizeUuid(value: String): String? {
+            val trimmed = value.trim()
+            return runCatching { UUID.fromString(trimmed).toString() }
+                .getOrNull()
+                ?.takeIf { it.equals(trimmed, ignoreCase = true) }
+        }
+    }
+}
 
