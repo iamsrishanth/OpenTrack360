@@ -2,19 +2,17 @@
 
 **Snapshot date:** 28 November 2026
 
-**Merged PRs:** [#1](https://github.com/iamsrishanth/OpenTrack360/pull/1), [#2](https://github.com/iamsrishanth/OpenTrack360/pull/2), [#3](https://github.com/iamsrishanth/OpenTrack360/pull/3), [#5](https://github.com/iamsrishanth/OpenTrack360/pull/5), [#6](https://github.com/iamsrishanth/OpenTrack360/pull/6), [#7](https://github.com/iamsrishanth/OpenTrack360/pull/7), [#8](https://github.com/iamsrishanth/OpenTrack360/pull/8), [#9](https://github.com/iamsrishanth/OpenTrack360/pull/9), [#10](https://github.com/iamsrishanth/OpenTrack360/pull/10)
-
 **Initial web/API implementation:** `45dbe9f56383179f1227d3eed90b1690fa562271`
 
 **Production application code commit:** `0959572e15f1a045c042a2a5a341172d574da327`
 
-**Current production deployment:** `dpl_2owpJnapvB62HriJgYbWt96vBxhc` (READY at `6f878638119b4fddd7b1b9766db942de6e117485`; [deployment](https://opentrack360-9uoknp0c3-srishanths-projects.vercel.app), aliased to `track.srishanth.me`)
+The application code above remains the production implementation; later acceptance-checkpoint merges change documentation only. Route probes below record the production behavior observed on 28 November 2026.
 
-This records production deployment, hosted migration, drive-end validator evidence, public route probes, and Android domain-verification state. The current application code was introduced at `0959572e15f1a045c042a2a5a341172d574da327`; PRs #8 through #10 only update acceptance documentation. Signed-in end-to-end acceptance still needs an authorized platform administrator and disposable synthetic member credentials.
+This records production deployment, hosted migration, drive-end validator evidence, public route probes, and Android domain-verification state. Signed-in end-to-end acceptance still needs an authorized platform administrator and disposable synthetic member credentials.
 
 ## Production deployment and route probes
 
-The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). A read-only Vercel project inspection confirmed the project root is `apps/web` and the build command is `npm run build`. The current production deployment is READY at `6f878638119b4fddd7b1b9766db942de6e117485` and is aliased to the custom domain. Its application code is from `0959572e15f1a045c042a2a5a341172d574da327`; PRs #8, #9, and #10 only updated documentation.
+The existing Vercel project `opentrack360` serves [track.srishanth.me](https://track.srishanth.me). A read-only Vercel project inspection confirmed the project root is `apps/web` and the build command is `npm run build`. The Vercel production deployment used for the latest route probe was READY at `b4911b7debc6ad544f272a6df1808c5c8d9936f8` and aliased to the custom domain. Its application code is from `0959572e15f1a045c042a2a5a341172d574da327`.
 
 | Production request | Observed result | What it proves |
 | --- | --- | --- |
@@ -51,7 +49,7 @@ The 9-minute movement-to-stop gap remains a negative case: the actual hosted `pu
 - Redocly lint for `contracts/openapi.yaml`: passed; all 120 contract JSON examples parsed.
 - The [Supabase database workflow](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45952892371) passed on PR #3. The same workflow passed on [PR #7](https://github.com/iamsrishanth/OpenTrack360/actions/runs/45988903479), including command-helper tests, a clean local migration reset, and the full pgTAP suite.
 - `node --test scripts/operator-provision-admin.test.mjs` passed 6/6; the non-mutating CLI check verified the expected project and `postgres` database-management session.
-- On 28 November 2026, the production deployment at `6f878638119b4fddd7b1b9766db942de6e117485` was READY. Public probes returned 200 for `/`, `/admin`, `/s/{id}`, `/p/{id}`, `/i`, and `/.well-known/assetlinks.json`; 401 for signed-out `/api/v1/me`, `/api/v1/admin/accounts`, and `/api/v1/shares`; and 404 for an unknown public share without a secret. The guest shells returned `private, no-store`, `no-referrer`, and `noindex` headers. The release association contained the expected package and fingerprint.
+- On 28 November 2026, the production deployment at `b4911b7debc6ad544f272a6df1808c5c8d9936f8` was READY. Public probes returned 200 for `/`, `/admin`, `/s/{id}`, `/p/{id}`, `/i`, and `/.well-known/assetlinks.json`; 401 for signed-out `/api/v1/me`, `/api/v1/admin/accounts`, and `/api/v1/shares`; and 404 for an unknown public share without a secret. The guest shells returned `private, no-store`, `no-referrer`, and `noindex` headers. The release association contained the expected package and fingerprint.
 
 ## Remaining acceptance and provider prerequisites
 
