@@ -46,6 +46,14 @@ export function jwtSessionId(token: string): string | null {
     : null;
 }
 
+export function jwtSubject(token: string): string | null {
+  const subject = jwtClaims(token)?.sub;
+  return typeof subject === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(subject)
+    ? subject
+    : null;
+}
+
 export function jwtOAuthClientId(token: string): string | null {
   const value = jwtClaims(token)?.client_id;
   return typeof value === "string" && value.length <= 128 ? value : null;
@@ -63,7 +71,7 @@ function hasOAuthClientClaim(token: string): boolean {
 
 export async function requireMember(
   request: Request,
-  options: { allowPasswordRotation?: boolean } = {},
+  options: { allowPasswordRotation?: boolean; allowPlatformAdmin?: boolean } = {},
 ): Promise<MemberContext> {
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+([A-Za-z0-9._~-]+)$/i.exec(authorization);
@@ -101,6 +109,7 @@ export async function requireMember(
     isPlatformAdmin: session.isPlatformAdmin === true,
   };
   if (!context.username || !Number.isSafeInteger(context.sharingEpoch) || context.sharingEpoch < 1) throw unauthorized();
+  if (context.isPlatformAdmin && options.allowPlatformAdmin !== true) throw unauthorized();
   if (context.mustRotatePassword && options.allowPasswordRotation !== true) {
     throw new AuthFault(428, "password_rotation_required", "Password rotation required");
   }
@@ -130,7 +139,10 @@ export async function requireAdminSession(
   if (!token) throw unauthorized();
   const headers = new Headers(request.headers);
   headers.set("authorization", `Bearer ${token}`);
-  const context = await requireMember(new Request(request.url, { method: "GET", headers }), options);
+  const context = await requireMember(new Request(request.url, { method: "GET", headers }), {
+    ...options,
+    allowPlatformAdmin: true,
+  });
   if (!context.isPlatformAdmin) throw new AuthFault(403, "forbidden", "Forbidden");
   return context;
 }

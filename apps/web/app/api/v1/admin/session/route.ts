@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { AuthFault, authFaultResponse, readAdminCookie, requireAdminCsrf, requireAdminSession, requireSameOrigin } from "@/src/server/auth/member";
 import { apiError, getAdminSupabase, getPublicSupabase, normalizeUsername, parseJsonObject } from "@/src/server/auth/supabase";
 import { jwtSessionId } from "@/src/server/auth/member";
+import { isAdminGoogleProviderAvailable } from "@/src/server/auth/admin-google-oauth";
 
 const ADMIN_COOKIE_PATH = "/api/v1/admin";
 const ACCESS_AGE = 60 * 60;
@@ -20,7 +21,8 @@ export async function GET(request: Request): Promise<Response> {
   const csrfToken = current && current.length >= 32 ? current : randomBytes(32).toString("base64url");
   const headers = new Headers({ "Cache-Control": "no-store" });
   if (csrfToken !== current) headers.append("Set-Cookie", cookie("ot_admin_csrf", csrfToken, { maxAge: REFRESH_AGE, path: "/", httpOnly: false }));
-  return Response.json({ csrfToken }, { headers });
+  const googleOAuthEnabled = await isAdminGoogleProviderAvailable();
+  return Response.json({ csrfToken, googleOAuthEnabled }, { headers });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -38,6 +40,9 @@ export async function POST(request: Request): Promise<Response> {
     const { data: identity, error: lookupError } = await admin.rpc("opentrack_lookup_login", { p_username_normalized: username });
     if (lookupError) return apiError(503, "service_unavailable", "Authentication service unavailable");
     const internal = identity as Record<string, unknown> | null;
+    if (internal?.isPlatformAdmin !== true || internal.adminAuthMethod === "google") {
+      return apiError(401, "unauthorized", "Invalid credentials");
+    }
     const email = typeof internal?.authEmail === "string" ? internal.authEmail : "not-a-member@invalid.invalid";
     const auth = getPublicSupabase();
     const { data, error } = await auth.auth.signInWithPassword({ email, password });

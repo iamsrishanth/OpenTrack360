@@ -1,9 +1,12 @@
-import { AuthFault, authFaultResponse, requireMember } from "./member";
+import { AuthFault, authFaultResponse, requireAdminSession, requireMember } from "./member";
 import { apiError, getAdminSupabase, getPublicSupabase, parseJsonObject } from "./supabase";
 
 export async function changeMemberPassword(request: Request): Promise<Response> {
   try {
-    const member = await requireMember(request, { allowPasswordRotation: true });
+    const isAdminPasswordRoute = new URL(request.url).pathname === "/api/v1/admin/session/password";
+    const member = isAdminPasswordRoute
+      ? await requireAdminSession(request, { allowPasswordRotation: true })
+      : await requireMember(request, { allowPasswordRotation: true });
     const body = await parseJsonObject(request);
     const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
     const newPassword = typeof body?.newPassword === "string" ? body.newPassword : "";

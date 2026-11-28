@@ -33,6 +33,7 @@ async function responseMessage(response: Response): Promise<string> {
 
 export default function AdminPage() {
   const [csrfToken, setCsrfToken] = useState("");
+  const [googleOAuthEnabled, setGoogleOAuthEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [mustRotate, setMustRotate] = useState(false);
   const [username, setUsername] = useState("");
@@ -46,9 +47,10 @@ export default function AdminPage() {
   const refreshCsrf = useCallback(async () => {
     const response = await fetch(`${API}/session`, { cache: "no-store", credentials: "same-origin" });
     if (!response.ok) throw new Error(await responseMessage(response));
-    const data = await response.json() as { csrfToken?: string };
+    const data = await response.json() as { csrfToken?: string; googleOAuthEnabled?: boolean };
     if (!data.csrfToken) throw new Error("Session protection could not be initialized");
     setCsrfToken(data.csrfToken);
+    setGoogleOAuthEnabled(data.googleOAuthEnabled === true);
     return data.csrfToken;
   }, []);
 
@@ -75,6 +77,17 @@ export default function AdminPage() {
     setAudit(auditData.data ?? []);
     setAuthenticated(true);
     setMustRotate(false);
+  }, []);
+
+  useEffect(() => {
+    const currentUrl = new URL(window.location.href);
+    const authStatus = currentUrl.searchParams.get("auth");
+    if (authStatus === "google-unavailable") setError("Google sign-in is not configured yet. Use the existing administrator sign-in for now.");
+    else if (authStatus === "google-signin-failed") setError("Google sign-in failed or this account is not authorized for platform administration.");
+    if (authStatus) {
+      currentUrl.searchParams.delete("auth");
+      window.history.replaceState(null, "", currentUrl.toString());
+    }
   }, []);
 
   useEffect(() => {
@@ -215,6 +228,10 @@ export default function AdminPage() {
             <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
             <button className={styles.primary} disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
           </form>
+          {googleOAuthEnabled && <>
+            <div className={styles.loginDivider}><span>or</span></div>
+            <a className={styles.googleButton} href="/api/v1/admin/google/start">Continue with Google</a>
+          </>}
         </section>}
 
         {authenticated && mustRotate && <section className={styles.panel + " " + styles.narrow}>

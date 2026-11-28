@@ -30,8 +30,12 @@ Copy the names from the repository-root `.env.example` into the local or Vercel 
 | `SUPABASE_SECRET_KEY` | Privileged Data API, Storage, and Auth Admin operations | Server-only secret; send as `apikey` only and never expose to browser or Android |
 | `OPENTRACK_AUTH_EMAIL_DOMAIN` | Controlled internal domain for opaque Supabase Auth email identities | Server-side configuration |
 | `OPENTRACK_ADMIN_BOOTSTRAP_SECRET` | One-time operator-only bootstrap of the first web administrator | Restricted server-only secret; remove after bootstrap |
+| `OPENTRACK_ADMIN_GOOGLE_EMAIL` | Exact verified Google email allowed to sign in to the Google-only platform administrator account | Server-side allowlist; not a credential |
+| `SUPABASE_OAUTH_ANDROID_CLIENT_ID` | Public first-party Android OAuth client ID | Public configuration; validate it server-side |
 
 No default administrator account or password is created. Public Supabase Auth sign-up is disabled. Use synthetic accounts and locations in preview environments. An admin password reset immediately revokes member sessions, advances the sharing epoch, disables Circle location/activity consent, ends guest links and active trips, and clears the latest location; the member must explicitly re-enable sharing after rotating the temporary password.
+
+Google sign-in for the platform administrator is a separate Supabase external provider from the Supabase OAuth Server used by Android. Store the Google Web client credentials in Supabase Auth provider settings. See `docs/google-admin-sign-in.md` for the exact callback and owner-only provisioning steps.
 
 ## Privacy and provider behavior
 

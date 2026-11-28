@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
     const email = typeof internal?.authEmail === "string" ? internal.authEmail : "not-a-member@invalid.invalid";
     const client = getPublicSupabase();
     const { data, error } = await client.auth.signInWithPassword({ email, password });
-    if (error || !data.session || !data.user || internal?.disabled === true || internal?.userId !== data.user.id) {
+    if (error || !data.session || !data.user || internal?.disabled === true || internal?.isPlatformAdmin === true || internal?.userId !== data.user.id) {
       return genericUnauthorized();
     }
 

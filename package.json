@@ -9,6 +9,7 @@
     "vercel-build": "npm run build",
     "start": "npm --workspace @opentrack360/web run start",
     "typecheck": "npm --workspace @opentrack360/web run typecheck",
-    "test:api": "npm --workspace @opentrack360/web run test:api"
+    "test:api": "npm --workspace @opentrack360/web run test:api",
+    "test:operator-admin": "node --test scripts/operator-provision-google-admin.test.mjs"
   }
 }

@@ -19,6 +19,11 @@
 .primary { color: #fff; background: #286344; }
 .primary:hover { background: #1f5238; }
 .primary:disabled, .secondary:disabled { opacity: .55; cursor: wait; }
+.loginDivider { display: flex; align-items: center; gap: 13px; margin: 19px 0 12px; color: #8a968e; font-size: 11px; }
+.loginDivider::before, .loginDivider::after { flex: 1; height: 1px; background: #e7ece8; content: ""; }
+.googleButton { display: flex; min-height: 42px; align-items: center; justify-content: center; border: 1px solid #d7ded9; border-radius: 8px; color: #2c3b31; background: #fff; font-size: 13px; font-weight: 700; text-decoration: none; transition: background .15s ease, border-color .15s ease; }
+.googleButton:hover { border-color: #bcc8bf; background: #f7f9f7; }
+.googleButton:focus-visible { outline: 3px solid #57916d55; outline-offset: 2px; }
 .secondary { color: #285b40; background: #e8f2eb; }
 .textButton { padding: 6px 0; border: 0; color: #315f45; background: transparent; font: inherit; font-weight: 650; cursor: pointer; }
 .required { padding: 15px; border-radius: 9px; background: #f1f7f2; }
