@@ -1,0 +1,11 @@
+{
+  "accessToken": "fixture-oauth-access-token-do-not-use",
+  "refreshToken": "fixture-oauth-refresh-token-do-not-use",
+  "tokenType": "Bearer",
+  "expiresInSeconds": 3600,
+  "user": {
+    "id": "1bcb3a8e-0d22-4b0a-a910-510fd4547f61",
+    "username": "aarav",
+    "mustRotatePassword": false
+  }
+}

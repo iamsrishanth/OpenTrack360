@@ -78,16 +78,18 @@ paths:
       tags: [Auth]
       operationId: refreshSession
       security: []
-      summary: Refresh a member session
+      summary: Refresh a password or OAuth member session
+      description: A Supabase OAuth session supplies its registered public clientId so the server uses the OAuth token endpoint and preserves the session epoch checks. Password sessions omit clientId.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [refreshToken]
-              properties:
-                refreshToken: { type: string, minLength: 20 }
+            schema: { $ref: '#/components/schemas/RefreshSessionRequest' }
+            examples:
+              passwordSession:
+                value: { refreshToken: fixture-refresh-token-do-not-use }
+              oauthSession:
+                value: { refreshToken: fixture-oauth-refresh-token-do-not-use, clientId: fixture-public-client-id }
       responses:
         '200':
           description: Rotated session tokens
@@ -95,6 +97,58 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MemberSession' }
         '401': { $ref: '#/components/responses/GenericUnauthorized' }
+  /auth/oauth-config:
+    get:
+      tags: [Auth]
+      operationId: getOAuthClientConfiguration
+      security: []
+      summary: Read public Android OAuth client configuration
+      description: Returns non-secret authorization settings for the registered public PKCE app. OAuth access tokens are still restricted by the API's client_id allowlist and server-side session epoch.
+      responses:
+        '200':
+          description: Public OAuth configuration; no client secret is issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthClientConfiguration' }
+              example:
+                issuer: https://project-ref.supabase.co/auth/v1
+                authorizationEndpoint: https://project-ref.supabase.co/auth/v1/oauth/authorize
+                tokenExchangeEndpoint: https://track.srishanth.me/api/v1/auth/oauth/exchange
+                refreshEndpoint: https://track.srishanth.me/api/v1/auth/refresh
+                clientId: fixture-public-client-id
+                redirectUri: https://track.srishanth.me/oauth/callback
+                responseType: code
+                codeChallengeMethod: S256
+                scopes: [openid]
+        '404': { $ref: '#/components/responses/NotFound' }
+  /auth/oauth/exchange:
+    post:
+      tags: [Auth]
+      operationId: exchangeOAuthAuthorizationCode
+      security: []
+      summary: Exchange a PKCE authorization code and register its member session
+      description: The Vercel API forwards the one-time code to Supabase, validates the returned access token and the fixed Android client_id, then registers the session only if its JWT iat is at or after the current account session epoch boundary. The code and verifier are never returned or logged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OAuthCodeExchangeRequest' }
+            example: { code: fixture-authorization-code-do-not-use, codeVerifier: fixture-code-verifier-do-not-use-abcdefghijklmnopqrstuvwxyz012345 }
+      responses:
+        '200':
+          description: OAuth member session; temporary-password rotation remains required when indicated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemberSession' }
+              example:
+                accessToken: fixture-oauth-access-token-do-not-use
+                refreshToken: fixture-oauth-refresh-token-do-not-use
+                tokenType: Bearer
+                expiresInSeconds: 3600
+                user: { id: 1bcb3a8e-0d22-4b0a-a910-510fd4547f61, username: aarav, mustRotatePassword: false }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/GenericUnauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /auth/logout:
     post:
       tags: [Auth]
@@ -1792,6 +1846,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
+    ServiceUnavailable:
+      description: Authentication service is temporarily unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
     PasswordRotationRequired:
       description: Temporary password must be rotated before member data access
       content:
@@ -2154,6 +2213,34 @@ components:
       properties:
         username: { type: string, minLength: 3, maxLength: 32, description: Case-insensitive normalized identifier. }
         password: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+    RefreshSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 20, maxLength: 4096, writeOnly: true }
+        clientId: { type: string, minLength: 1, maxLength: 128, description: Required for a Supabase OAuth session. Omit for a username/password session. }
+    OAuthCodeExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [code, codeVerifier]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 4096, writeOnly: true, description: Single-use code from the registered HTTPS callback. Never log or persist it. }
+        codeVerifier: { type: string, minLength: 43, maxLength: 128, pattern: '^[A-Za-z0-9._~-]+$', writeOnly: true, description: PKCE verifier generated by the Android app; transmit only over HTTPS and discard after exchange. }
+    OAuthClientConfiguration:
+      type: object
+      additionalProperties: false
+      required: [issuer, authorizationEndpoint, tokenExchangeEndpoint, refreshEndpoint, clientId, redirectUri, responseType, codeChallengeMethod, scopes]
+      properties:
+        issuer: { type: string, format: uri }
+        authorizationEndpoint: { type: string, format: uri }
+        tokenExchangeEndpoint: { type: string, format: uri, description: OpenTrack360 endpoint that validates and registers the OAuth session. }
+        refreshEndpoint: { type: string, format: uri, description: OpenTrack360 endpoint; send refreshToken and clientId. }
+        clientId: { type: string, minLength: 1, maxLength: 128, description: Public client identifier; it is not a secret. }
+        redirectUri: { type: string, const: 'https://track.srishanth.me/oauth/callback' }
+        responseType: { type: string, const: code }
+        codeChallengeMethod: { type: string, const: S256 }
+        scopes: { type: array, items: { type: string, enum: [openid] }, minItems: 1, maxItems: 1 }
     MemberSession:
       type: object
       additionalProperties: false

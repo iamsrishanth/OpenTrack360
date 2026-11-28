@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:api": "tsx --test tests/api/dispatcher.test.ts"
+    "test:api": "tsx --test tests/api/dispatcher.test.ts tests/api/oauth-security.test.ts tests/api/oauth-config.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

@@ -2,7 +2,13 @@
   "$schema": "https://supabase.com/schemas/config/v1.json",
   "project_id": "opentrack360-ci",
   "auth": {
-    "enable_signup": false
+    "enable_signup": false,
+    "site_url": "https://track.srishanth.me",
+    "oauth_server": {
+      "enabled": true,
+      "authorization_url_path": "/oauth/consent",
+      "allow_dynamic_registration": false
+    }
   },
   "db": {
     "migrations": {
